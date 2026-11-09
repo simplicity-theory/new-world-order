@@ -129,20 +129,92 @@ export class WorldGen {
 
   /**
    * The settlements in a box and the roads joining them, as plain data in metres from
-   * the world origin. Each road runs centre to centre along the route that is drawn.
+   * the world origin, for games built on the map. Each road runs centre to centre along
+   * the route that is drawn, including the avenue into each town.
    */
   roadGraph(box: Box) {
+    const { terrain, hydro, relief, settlements } = this;
     const [ox, oy] = this.origin;
     const local = (p: Pt): Pt => [Math.round(p[0] - ox), Math.round(p[1] - oy)];
     const id = (s: Settlement) => `${s.a}_${s.b}`;
-    const towns = this.settlements.within(box);
+    const towns = settlements.within(box);
     const inside = new Set(towns);
-    const roads = this.settlements.highways(box).filter((h) => inside.has(h.a) && inside.has(h.b)).map((h) => ({
-      a: id(h.a), b: id(h.b), kind: h.kind, ref: h.ref,
-      pts: [[h.a.x, h.a.y] as Pt, ...this.highway(h), [h.b.x, h.b.y] as Pt].map(local),
-    }));
+
+    /** A link's drawn route from town a outwards: avenue, then the trimmed road, then b's avenue if it ends in a town. */
+    const drawn = (link: Link): Pt[] => {
+      const mid = this.highway(link);
+      const avenue = (s: Settlement, at: Pt): Pt[] =>
+        this.town(s).streets.find((st) => Math.hypot(st.pts[st.pts.length - 1][0] - at[0], st.pts[st.pts.length - 1][1] - at[1]) < 3)?.pts ?? [];
+      const head = avenue(link.a, mid[0]);
+      const pts: Pt[] = [[link.a.x, link.a.y], ...head, ...(head.length ? mid.slice(1) : mid)];
+      if (!link.spur) {
+        const tail = [...avenue(link.b, mid[mid.length - 1])].reverse();
+        pts.push(...tail.slice(1), [link.b.x, link.b.y]);
+      }
+      return pts;
+    };
+    /** Where a route crosses rivers big enough to need a bridge, as distances along it. */
+    const bridges = (pts: Pt[]) => {
+      const out: { d: number; x: number; y: number }[] = [];
+      const rivers = hydro.water(boxOf(pts)).rivers.filter((r) => !r.minor);
+      let d = 0;
+      for (let k = 0; k + 1 < pts.length; k++) {
+        const seg: Pt[] = [pts[k], pts[k + 1]];
+        for (const r of rivers) {
+          for (const c of crossings(seg, r.pts)) {
+            const at = d + Math.hypot(c.x - pts[k][0], c.y - pts[k][1]);
+            if (!out.some((b) => Math.abs(b.d - at) < 40)) out.push({ d: Math.round(at), x: Math.round(c.x - ox), y: Math.round(c.y - oy) });
+          }
+        }
+        d += Math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]);
+      }
+      return out.sort((a, b) => a.d - b.d);
+    };
+    const road = (a: Settlement, b: Settlement, kind: string, ref: string, pts: Pt[]) =>
+      ({ id: `${id(a)}|${id(b)}${kind === 'motorway' ? '|m' : ''}`, a: id(a), b: id(b), kind, ref, pts: pts.map(local), bridges: bridges(pts) });
+
+    const roads = settlements.highways(box).filter((h) => inside.has(h.a) && inside.has(h.b))
+      .map((h) => road(h.a, h.b, h.kind, h.ref, drawn(h)));
+    for (const m of settlements.motorways(box)) {
+      // A motorway is reached by each city's link road: centre, link, motorway, link, centre.
+      if (!inside.has(m.a) || !inside.has(m.b)) continue;
+      const la = settlements.incident(m.a).find((h) => h.spur), lb = settlements.incident(m.b).find((h) => h.spur);
+      if (la && lb) roads.push(road(m.a, m.b, 'motorway', m.ref, [...drawn(la), ...m.pts.slice(1), ...drawn(lb).reverse().slice(1)]));
+    }
+
     return {
-      towns: towns.map((s) => ({ id: id(s), name: s.name, tier: s.tier, r: Math.round(s.r), x: Math.round(s.x - ox), y: Math.round(s.y - oy) })),
+      towns: towns.map((s) => {
+        // Border: how far the built-up area reaches in each direction, with a minimum so hamlets stay easy to click.
+        const dens = townDensity(s);
+        const outline: Pt[] = [];
+        for (let k = 0; k < 40; k++) {
+          const a = (k / 40) * Math.PI * 2;
+          let reach = 0;
+          for (let r = 20; r <= s.r * 1.3; r += 20) if (dens(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r) > 0) reach = r;
+          const d = Math.max(reach + 40, 300);
+          outline.push(local([s.x + Math.cos(a) * d, s.y + Math.sin(a) * d]));
+        }
+        // Two blocks for the game to put buildings on, industrial ones for preference.
+        const sites = this.town(s).blocks.filter((b) => b.kind !== 'park' && b.kind !== 'civic').map((b) => {
+          const cx = b.ring.reduce((t, p) => t + p[0], 0) / b.ring.length, cy = b.ring.reduce((t, p) => t + p[1], 0) / b.ring.length;
+          return { ring: b.ring, score: Math.abs(Math.hypot(cx - s.x, cy - s.y) - 0.45 * s.r) - (b.kind === 'industrial' ? 0.3 * s.r : 0) };
+        }).sort((p, q) => p.score - q.score).slice(0, 2).map((b) => b.ring.map(local));
+        for (let k = sites.length; k < 2; k++) {
+          const cx = s.x + (k ? 110 : -110), cy = s.y + 90;
+          sites.push(([[-35, -25], [35, -25], [35, 25], [-35, 25]] as Pt[]).map(([u, v]) => local([cx + u, cy + v])));
+        }
+        const here = relief.at(s.x, s.y);
+        let around = 0, sea = false;
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2;
+          if (k % 2 === 0) around += relief.at(s.x + Math.cos(a) * 1500, s.y + Math.sin(a) * 1500) / 8;
+          if (terrain.elev(s.x + Math.cos(a) * (s.r * 1.2 + 150), s.y + Math.sin(a) * (s.r * 1.2 + 150)) < 0) sea = true;
+        }
+        return {
+          id: id(s), name: s.name, tier: s.tier, r: Math.round(s.r), x: Math.round(s.x - ox), y: Math.round(s.y - oy), outline, sites,
+          traits: { hill: here - around > 12, river: hydro.riverNear(s.x, s.y, 0, 700) > 0, port: sea, rail: settlements.railsAt(s).length > 0 },
+        };
+      }),
       roads,
     };
   }

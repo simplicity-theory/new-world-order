@@ -23,7 +23,7 @@
   #speed { display: flex; gap: 3px; }
   #speed button { padding: 4px 8px; min-width: 34px; }
   .spacer { flex: 1; }
-  #panel { top: 78px; right: 12px; width: 290px; max-height: calc(100% - 110px); overflow: auto; padding: 12px; display: none; }
+  #panel { top: 78px; right: 12px; width: 310px; max-height: calc(100% - 110px); overflow: auto; padding: 12px; display: none; }
   #panel h2 { margin: 0; font-size: 16px; }
   #panel .sub { color: var(--muted); margin-bottom: 10px; }
   #panel h3 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
@@ -37,6 +37,15 @@
   #log { left: 12px; bottom: 28px; padding: 8px 12px; max-width: 320px; color: var(--muted); }
   #log div:last-child { color: var(--ink); }
   #toast { left: 50%; transform: translateX(-50%); bottom: 28px; padding: 8px 14px; display: none; }
+  #box { position: absolute; z-index: 3; display: none; border: 2px solid var(--you); background: #1f6feb22; pointer-events: none; }
+  #result { position: absolute; inset: 0; z-index: 4; display: none; align-items: center; justify-content: center; background: #1f293366; }
+  #result .card { position: static; padding: 22px 28px; text-align: center; }
+  #result h2 { margin: 0; font-size: 26px; letter-spacing: 0.04em; }
+  .check { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
+  .check input { padding: 0; }
+  .row.road { align-items: flex-start; }
+  .row.road button { flex: none; }
+  .row.road .cost { float: none; margin-left: 6px; }
   #veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; background: #d9dde0e6; font-size: 16px; }
 </style>
 </head>
@@ -49,7 +58,7 @@
   <button id="delete" title="Delete this game">✕</button>
   <span class="spacer"></span>
   <div class="stat"><b id="money">–</b><span id="income">money</span></div>
-  <div class="stat"><b id="towns">–</b><span>towns held</span></div>
+  <div class="stat"><b id="towns">–</b><span id="goal">towns held</span></div>
   <div class="stat"><b id="clock">–</b><span>time played</span></div>
   <div id="speed" role="group" aria-label="Game speed">
     <button data-speed="0" title="Pause">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>
@@ -59,6 +68,14 @@
 <div id="log" class="card"></div>
 <div id="toast" class="card"></div>
 <div id="veil"></div>
+<div id="box"></div>
+<div id="result">
+  <div class="card">
+    <h2 id="result-title"></h2>
+    <p id="result-text"></p>
+    <button id="keep">Keep playing</button> <button id="again" class="primary">New game</button>
+  </div>
+</div>
 <script type="module" src="/game/game.js"></script>
 </body>
 </html>

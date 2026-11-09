@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "start": "node server/main.ts",
-    "dev": "node --watch server/main.ts"
+    "dev": "node --watch server/main.ts",
+    "test": "node --test server/game/"
   },
   "type": "module",
   "dependencies": {
