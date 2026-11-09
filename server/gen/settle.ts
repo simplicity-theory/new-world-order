@@ -237,9 +237,10 @@ export class Settlements {
     const hub = this.interchange(s);
     if (hub && this.motorways(boxPad(this.around(s), s.r + 800)).some((m) => m.a === s || m.b === s)) {
       const spur = this.cached('spur', s, s, () => {
-        const pts: Pt[] = [];
-        const n = Math.ceil(Math.hypot(hub[0] - s.x, hub[1] - s.y) / 50);
-        for (let k = 0; k <= n; k++) pts.push([s.x + ((hub[0] - s.x) * k) / n, s.y + ((hub[1] - s.y) * k) / n]);
+        // Routed like any other road, so it goes round lakes and uses river crossings.
+        const found = this.search({ from: [s.x, s.y], to: hub, grid: 50, pad: 800, grade: 196, stream: 30, river: 2500, site: 150, avoid: [] });
+        if (!found) return null;
+        const pts = chaikin(simplify(found, 40), 3);
         return { pts, kind: 'primary', box: boxOf(pts), a: s, b: s, ref: '', spur: true };
       });
       if (spur) out.push(spur);

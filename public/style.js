@@ -24,6 +24,7 @@ const ROADS = [
   ['tertiary', ['tertiary'], 9, '#ffffff', '#c4bcae', width(9, 0.6, 12, 1.6, 15, 5.5, 17, 14, 19, 36), width(9, 0, 12, 2.8, 15, 7.5, 17, 16.5, 19, 39)],
   ['secondary', ['secondary'], 8, '#fdf3b4', '#cdb35c', width(8, 0.8, 12, 2.4, 15, 7, 17, 17, 19, 42), width(8, 1.2, 12, 3.8, 15, 9, 17, 19.5, 19, 45)],
   ['primary', ['primary'], 6, '#fbd58b', '#cf9a3c', width(6, 1, 12, 3, 15, 8.5, 17, 20, 19, 48), width(6, 1.6, 12, 4.6, 15, 10.5, 17, 22.5, 19, 51)],
+  ['link', ['link'], 11, '#ef9f7c', '#b9583a', width(11, 0.7, 15, 4, 17, 10, 19, 24), width(11, 1.2, 15, 5.6, 17, 12.5, 19, 27)],
   ['motorway', ['motorway'], 5, '#ef9f7c', '#b9583a', width(5, 1.4, 12, 3.8, 15, 10, 17, 24, 19, 56), width(5, 2.2, 12, 5.6, 15, 12.5, 17, 27, 19, 60)],
 ];
 const ROAD_COLOR = { street: '#ffffff', street_major: '#ffffff', tertiary: '#ffffff', track: '#ffffff', secondary: '#fdf3b4', primary: '#fbd58b', motorway: '#ef9f7c', rail: '#8a8a8a' };
@@ -81,6 +82,7 @@ export function buildStyle(tilesUrl, demUrl, mask) {
         paint: { 'line-color': '#a8855a',
           'line-opacity': ['match', ['get', 'kind'], 'index', 0.6, 0.38],
           'line-width': ['match', ['get', 'kind'], 'index', 1.1, 0.6] } }),
+      fill('urban', 'landuse', ['urban'], '#ebe8e0', { minzoom: 12 }),
       fill('residential', 'landuse', ['residential'], '#e8e3da', { minzoom: 12 }),
       fill('commercial', 'landuse', ['commercial'], '#efdfd8', { minzoom: 12 }),
       fill('industrial', 'landuse', ['industrial'], '#e2dde6', { minzoom: 12 }),
@@ -116,6 +118,8 @@ export function buildStyle(tilesUrl, demUrl, mask) {
           'fill-extrusion-color': byKind({ commercial: '#d9c9c0', industrial: '#cdc7d3', farm: '#cfc3ae', church: '#bfae9c', school: '#d6c59a', townhall: '#c9b48a', hospital: '#e3bdb8' }, '#d8d0c4'),
           'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-opacity': 0.92,
         } },
+      { id: 'crossing', type: 'circle', source: 'world', 'source-layer': 'crossing', minzoom: 14.5,
+        paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 14.5, 2, 18, 5], 'circle-color': '#ffffff', 'circle-stroke-color': '#6f6f6f', 'circle-stroke-width': 1.4 } },
       { id: 'ford', type: 'circle', source: 'world', 'source-layer': 'ford', minzoom: 14,
         paint: { 'circle-radius': 3, 'circle-color': '#ffffff', 'circle-stroke-color': '#6f9fc4', 'circle-stroke-width': 1.5 } },
       { id: 'poi-dot', type: 'circle', source: 'world', 'source-layer': 'poi', minzoom: 14,

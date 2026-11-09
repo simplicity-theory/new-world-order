@@ -33,7 +33,13 @@ const WORDS = ['Oak', 'Elm', 'Maple', 'Cedar', 'Pine', 'Birch', 'Ash', 'Willow',
   'Hazel', 'Harbour', 'Quarry', 'Tanner', 'Baker', 'Weaver', 'Cooper', 'Fisher', 'Shepherd', 'Mason'];
 const SAINTS = ['Mary', 'John', 'Peter', 'Anne', 'Luke', 'Clare', 'Martin', 'Agnes', 'Paul', 'Hilda'];
 
-interface Avenue { ang: number; len: number; kind: string; name: string }
+/** How built-up a town is at a point: about 1 at the centre, 0 at its ragged edge, negative beyond. */
+export function townDensity(s: Settlement): (x: number, y: number) => number {
+  const seed = hashInt(s.seed, 555, s.tier);
+  return (x, y) => 1 - Math.hypot(x - s.x, y - s.y) / (0.77 * s.r) + 0.3 * noise2(seed + 3, x / (0.5 * s.r), y / (0.5 * s.r));
+}
+
+interface Avenue { ang: number; len: number; kind: string; name: string; pt: Pt }
 
 export function buildTown(
   terrain: Terrain, hydro: Hydro, relief: Relief, s: Settlement, incident: Link[], rails: Link[],
@@ -42,7 +48,10 @@ export function buildTown(
   const rng = mulberry32(seed);
   const big = s.tier >= 2;
   const edge = s.r * 0.95;              // where highways hand over to avenues
-  const rc = big ? s.r * (s.tier === 3 ? 0.17 : 0.2) : 0;   // radius of the old core
+  const rc = big ? s.r * (s.tier === 3 ? 0.17 : 0.2) : 0;   // mean radius of the old core
+  // The core is a rounded, lopsided shape rather than a circle.
+  const lobe2 = rng() * Math.PI * 2, lobe3 = rng() * Math.PI * 2;
+  const rcAt = (a: number): number => rc * (1 + 0.16 * Math.sin(2 * a + lobe2) + 0.1 * Math.sin(3 * a + lobe3));
 
   // Everything is planned on straight lines, then bent by this warp. It is zero at the
   // centre and at the edge, so avenues still meet their highways exactly.
@@ -52,10 +61,9 @@ export function buildTown(
     const k = amp * Math.sin(Math.PI * q);
     return [x + k * noise2(seed + 1, x / wl, y / wl), y + k * noise2(seed + 2, x / wl, y / wl)];
   };
-  const density = (x: number, y: number): number =>
-    1 - Math.hypot(x - s.x, y - s.y) / (0.77 * s.r) + 0.3 * noise2(seed + 3, x / (0.5 * s.r), y / (0.5 * s.r));
+  const density = townDensity(s);
 
-  const area: Box = boxPad({ minx: s.x, miny: s.y, maxx: s.x, maxy: s.y }, s.r + 250);
+  const area: Box = boxPad({ minx: s.x, miny: s.y, maxx: s.x, maxy: s.y }, s.r * 1.5 + 250);
   const mask = new Mask(area, 8);
   const { rivers, lakes } = hydro.water(area);
   for (const r of rivers) mask.stampLine(r.pts, Math.max(r.width, r.w1) / 2 + (r.kind === 'stream' ? 7 : 12), 1);
@@ -99,17 +107,27 @@ export function buildTown(
     if (!out) continue;
     const hit = out.pt;
     const ang = Math.atan2(hit[1] - s.y, hit[0] - s.x);
-    const clash = avenues.some((a) => Math.abs(((a.ang - ang + Math.PI * 3) % TAU) - Math.PI) < 0.6);
-    if (clash) continue; // too close to a bigger road's avenue: this one keeps running to the centre
+    const main = avenues.find((a) => Math.abs(((a.ang - ang + Math.PI * 3) % TAU) - Math.PI) < 0.6);
+    if (main) {
+      // Too close to a bigger road's avenue to have its own: it joins that road outside town.
+      // The join is a straight run, so it is only made where that run stays on dry land.
+      for (const reach of [1.5, 1.15]) {
+        const far = exit(hw, edge * reach);
+        if (!far) continue;
+        let dry = true;
+        for (let q = 1; q < 16 && dry; q++) dry = !wet(main.pt[0] + ((far.pt[0] - main.pt[0]) * q) / 16, main.pt[1] + ((far.pt[1] - main.pt[1]) * q) / 16);
+        if (dry) { layout.cuts.set(hw, { t: far.t, pt: main.pt }); break; }
+      }
+      continue;
+    }
     const other = hw.a === s ? hw.b : hw.a;
-    avenues.push({ ang, len: Math.hypot(hit[0] - s.x, hit[1] - s.y), kind: hw.kind, name: hw.spur ? `${s.name} Link` : `${other.name} Road` });
+    avenues.push({ ang, len: Math.hypot(hit[0] - s.x, hit[1] - s.y), kind: hw.kind, name: hw.spur ? `${s.name} Link` : `${other.name} Road`, pt: hit });
     layout.cuts.set(hw, out);
   }
-  if (!avenues.length) avenues.push({ ang: rng() * TAU - Math.PI, len: edge * 0.9, kind: 'street_major', name: 'High Street' });
-  if (avenues.length === 1) {
-    const a = avenues[0].ang + Math.PI;
-    avenues.push({ ang: a > Math.PI ? a - TAU : a, len: edge * 0.9, kind: 'street_major', name: 'High Street' });
-  }
+  const extra = (ang: number) => avenues.push({ ang, len: edge * 0.9, kind: 'street_major', name: 'High Street',
+    pt: [s.x + Math.cos(ang) * edge * 0.9, s.y + Math.sin(ang) * edge * 0.9] });
+  if (!avenues.length) extra(rng() * TAU - Math.PI);
+  if (avenues.length === 1) extra(avenues[0].ang > 0 ? avenues[0].ang - Math.PI : avenues[0].ang + Math.PI);
   avenues.sort((a, b) => a.ang - b.ang);
 
   const emit = (plan: Pt[], kind: string, name: string) => {
@@ -128,13 +146,13 @@ export function buildTown(
   };
   for (const a of avenues) {
     const plan: Pt[] = [];
-    for (let d = rc; d < a.len; d += 40) plan.push([s.x + Math.cos(a.ang) * d, s.y + Math.sin(a.ang) * d]);
+    for (let d = rcAt(a.ang); d < a.len; d += 40) plan.push([s.x + Math.cos(a.ang) * d, s.y + Math.sin(a.ang) * d]);
     plan.push([s.x + Math.cos(a.ang) * a.len, s.y + Math.sin(a.ang) * a.len]);
     emit(plan, a.kind, a.name);
   }
   if (rc) {
     const plan: Pt[] = [];
-    for (let k = 0; k <= 48; k++) plan.push([s.x + Math.cos((k / 48) * TAU) * rc, s.y + Math.sin((k / 48) * TAU) * rc]);
+    for (let k = 0; k <= 48; k++) plan.push([s.x + Math.cos((k / 48) * TAU) * rcAt((k / 48) * TAU), s.y + Math.sin((k / 48) * TAU) * rcAt((k / 48) * TAU)]);
     emit(plan, 'street_major', `${s.name} Ring`);
   }
 
@@ -145,7 +163,7 @@ export function buildTown(
   const district = (id: number, theta: number, bw: number, bh: number, span: number | null) => {
     const cs = Math.cos(theta), sn = Math.sin(theta);
     const T = (u: number, v: number): Pt => fin(s.x + u * cs - v * sn, s.y + u * sn + v * cs);
-    const lim = span === null ? rc : s.r;
+    const lim = span === null ? rc * 1.3 : s.r;
     const nu = Math.ceil(lim / bw) + 1, nv = Math.ceil(lim / bh) + 1;
     const W = 2 * nu + 1, Hh = 2 * nv + 1;
     const vi = (i: number, j: number) => (j + nv) * W + (i + nu);
@@ -153,9 +171,10 @@ export function buildTown(
     /** 0 outside the district, 1 inside, 2 on the avenue that bounds it. */
     const geo = (u: number, v: number, onAxis: boolean): number => {
       const d = Math.hypot(u, v);
-      if (span === null) return d < rc - 10 ? 1 : 0;
-      if (onAxis && u > 0 && u >= rc - 1) return 2;
-      if (d < rc + 12) return 0;
+      const ring = rc ? rcAt(Math.atan2(v, u) + theta) : 0;
+      if (span === null) return d < ring - 10 ? 1 : 0;
+      if (onAxis && u > 0 && u >= ring - 1) return 2;
+      if (d < ring + 12) return 0;
       let a = Math.atan2(v, u);
       if (a < 0) a += TAU;
       if (a <= 0 || a >= span) return 0;
@@ -341,22 +360,27 @@ export function buildTown(
             if (sa * sb < 0) {
               const t = sa / (sa - sb);
               const u = ua + (ub - ua) * t, v = va + (vb - va) * t;
-              if (u * cosS + v * sinS >= rc && t < best) best = t;
+              if (u * cosS + v * sinS >= rc * 0.8 && t < best) best = t;
             }
             if (va * vb < 0) {
               const t = va / (va - vb);
-              if (ua + (ub - ua) * t >= rc && t < best) best = t;
+              if (ua + (ub - ua) * t >= rc * 0.8 && t < best) best = t;
             }
           }
           if (rc) {
-            // Where the segment meets the ring road.
-            const ex = ub - ua, ey = vb - va;
-            const qa = ex * ex + ey * ey, qb = 2 * (ua * ex + va * ey), qc = ua * ua + va * va - rc * rc;
-            const disc = qb * qb - 4 * qa * qc;
-            if (disc >= 0) {
-              for (const t of [(-qb - Math.sqrt(disc)) / (2 * qa), (-qb + Math.sqrt(disc)) / (2 * qa)]) {
-                if (t > 0.02 && t <= 1 && t < best) best = t;
+            // Where the segment meets the ring road: bisect for the crossing.
+            const off = (t: number): number => {
+              const u = ua + (ub - ua) * t, v = va + (vb - va) * t;
+              return Math.hypot(u, v) - rcAt(Math.atan2(v, u) + theta);
+            };
+            if (off(0) * off(1) < 0) {
+              let lo = 0, hi = 1;
+              const inside = off(0) < 0;
+              for (let it = 0; it < 18; it++) {
+                const m = (lo + hi) / 2;
+                if ((off(m) < 0) === inside) lo = m; else hi = m;
               }
+              if (hi > 0.02 && hi < best) best = hi;
             }
           }
           if (best > 1) continue;

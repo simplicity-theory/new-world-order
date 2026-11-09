@@ -12,7 +12,7 @@ const DETAIL_MIN_ZOOM = 13; // fine detail is left out of tiles below this zoom
 /** Detail that is stored with a chunk but only worth sending at high zoom. */
 function isDetail(tags: { layer: string; kind: string }): boolean {
   switch (tags.layer) {
-    case 'building': case 'field': case 'poi': case 'manmade': case 'ford': return true;
+    case 'building': case 'field': case 'poi': case 'manmade': case 'ford': case 'crossing': return true;
     case 'contour': return tags.kind !== 'index';
     case 'river': return tags.kind === 'stream';
     case 'road': return tags.kind === 'track';

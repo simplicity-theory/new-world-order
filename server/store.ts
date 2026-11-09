@@ -9,7 +9,8 @@ import { THREADS, run } from './pool.ts';
 // One SQLite file per world. Chunks are frozen once written; every generation and
 // save is timed and logged so the cost of growing a world can be studied later.
 
-const DIR = join(import.meta.dirname, '..', 'data', 'worlds');
+// DATA_DIR lets tests keep their worlds away from the real ones.
+const DIR = process.env.DATA_DIR ?? join(import.meta.dirname, '..', 'data', 'worlds');
 mkdirSync(DIR, { recursive: true });
 
 /** Chunk indices covered by a world, inclusive. Worlds are always rectangles. */

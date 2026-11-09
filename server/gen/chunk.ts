@@ -1,17 +1,17 @@
 import {
   type Box, type Pt, Mask, boxOf, boxPad, boxesIntersect, chaikin, clipLine, clipPoly, contourLines, contourPolygons,
-  crossings, inBox, lineLength, nearestOnLine,
+  crossings, inBox, lineLength, nearestOnLine, pointInRing, ringArea,
 } from './geom.ts';
 import { Hydro, type River } from './hydro.ts';
 import { Relief } from './relief.ts';
 import { hashInt, noise2, rand01 } from './rng.ts';
 import { Settlements, stemName, type Link, type Settlement } from './settle.ts';
 import { Terrain } from './terrain.ts';
-import { type TownLayout, buildTown } from './town.ts';
+import { type TownLayout, buildTown, townDensity } from './town.ts';
 import { Trunk } from './trunk.ts';
 
 /** Bumped whenever generator output changes; chunks from different versions do not line up. */
-export const GEN_VERSION = 4;
+export const GEN_VERSION = 6;
 export const CHUNK = 2000;  // chunk edge (m)
 const CELL = 20;            // terrain sampling (m)
 const N = CHUNK / CELL + 1; // nodes per side
@@ -37,10 +37,10 @@ export interface ChunkResult {
 export function isOverview(f: Feature): boolean {
   const { layer, kind } = f.properties;
   switch (layer) {
-    case 'building': case 'landuse': case 'field': case 'poi': case 'manmade': case 'bridge': case 'ford': return false;
+    case 'building': case 'landuse': case 'field': case 'poi': case 'manmade': case 'bridge': case 'ford': case 'crossing': return false;
     case 'contour': return kind === 'index';
     case 'river': return kind === 'river';
-    case 'road': return kind !== 'street' && kind !== 'street_major' && kind !== 'track';
+    case 'road': return kind !== 'street' && kind !== 'street_major' && kind !== 'track' && kind !== 'link';
     default: return true;
   }
 }
@@ -163,9 +163,14 @@ export class WorldGen {
     const M = N + 2;
     const { z, raw, near: nearWater } = this.relief.grid(box.minx - CELL, box.miny - CELL, CELL, M, M);
     const field = new Float32Array(N * N);
-    const contour = (layer: string, kind: string, fn: (i: number, j: number, k: number) => number) => {
+    const contour = (layer: string, kind: string, fn: (i: number, j: number, k: number) => number, minArea = 0) => {
       for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) field[j * N + i] = fn(i, j, (j + 1) * M + i + 1);
-      for (const rings of contourPolygons(field, N, box.minx, box.miny, CELL)) poly(layer, kind, rings);
+      for (const rings of contourPolygons(field, N, box.minx, box.miny, CELL)) {
+        // Specks are dropped unless they touch the chunk edge, where they may continue next door.
+        if (minArea && ringArea(rings[0]) < minArea
+          && !rings[0].some(([x, y]) => x <= box.minx || x >= box.maxx || y <= box.miny || y >= box.maxy)) continue;
+        poly(layer, kind, rings);
+      }
     };
     poly('land', 'land', [[[box.minx, box.miny], [box.maxx, box.miny], [box.maxx, box.maxy], [box.minx, box.maxy]]]);
     contour('landcover', 'sand', (_i, _j, k) => 2.5 - raw[k]);
@@ -263,7 +268,7 @@ export class WorldGen {
         if (h.spur && boxesIntersect(h.box, wide)) highways.push({ kind: h.kind, ref: h.ref, pts: this.highway(h) });
       }
     }
-    const motorways = settlements.motorways(boxPad(box, 60));
+    const motorways = settlements.motorways(wide);
     const rails = settlements.rails(boxPad(box, 60)).map((r) => ({ kind: 'rail', pts: this.highway(r) }));
     for (const h of highways) line('road', h.kind, h.pts, h.ref ? { ref: h.ref } : undefined);
     for (const m of motorways) line('road', 'motorway', m.pts, { ref: m.ref });
@@ -271,9 +276,34 @@ export class WorldGen {
     for (const s of near) {
       if (inBox(box, s.x, s.y)) point('place', TIERS[s.tier], s.x, s.y, { tier: s.tier, name: s.name });
     }
+    // Where a motorway crosses a road: a bridge and four slip roads, one in each corner.
+    const ramps: Pt[][] = [];
     for (const m of motorways) {
       for (const h of highways) {
-        for (const c of crossings(m.pts, h.pts)) if (inBox(box, c.x, c.y)) point('poi', 'junction', c.x, c.y, { name: `${m.ref} / ${h.ref || 'local road'}` });
+        const back = crossings(h.pts, m.pts);
+        for (const c of crossings(m.pts, h.pts)) {
+          const hd = back.find((q) => Math.hypot(q.x - c.x, q.y - c.y) < 2);
+          if (!hd) continue;
+          for (const sm of [1, -1]) {
+            for (const sh of [1, -1]) {
+              const ax = c.x + c.dx * sm * 240, ay = c.y + c.dy * sm * 240;
+              const bx = c.x + hd.dx * sh * 150, by = c.y + hd.dy * sh * 150;
+              const qx = c.x + c.dx * sm * 95 + hd.dx * sh * 35, qy = c.y + c.dy * sm * 95 + hd.dy * sh * 35;
+              const ramp: Pt[] = [];
+              for (let t = 0; t <= 1.001; t += 0.1) {
+                ramp.push([(1 - t) * (1 - t) * ax + 2 * t * (1 - t) * qx + t * t * bx, (1 - t) * (1 - t) * ay + 2 * t * (1 - t) * qy + t * t * by]);
+              }
+              // No slip road into a lake or the sea.
+              if (ramp.some(([x, y]) => terrain.elev(x, y) < 1 || lakes.some((l) => pointInRing(x, y, l.ring)))) continue;
+              line('road', 'link', ramp);
+              ramps.push(ramp);
+            }
+          }
+          if (!inBox(box, c.x, c.y)) continue;
+          point('poi', 'junction', c.x, c.y, { name: `${m.ref} / ${h.ref || 'local road'}` });
+          features.push({ type: 'Feature', properties: { layer: 'bridge', kind: 'motorway' },
+            geometry: { type: 'LineString', coordinates: [[c.x - c.dx * 16, c.y - c.dy * 16] as Pt, [c.x + c.dx * 16, c.y + c.dy * 16] as Pt].map(this.ll) } });
+        }
       }
     }
     lap('transport');
@@ -317,9 +347,10 @@ export class WorldGen {
     });
     contour('landcover', 'marsh', (i, j, k) => {
       const q = j * N + i;
-      return Math.min(nearWater[k] - 0.72, moist[q] - 0.1) - slope(k) * 5 - (raw[k] < 1 ? 2 : 0) - Math.max(0, urban[q] + 0.1) * 4;
-    });
-    contour('landcover', 'rock', (i, j, k) => Math.max((z[k] - 440 - 50 * vary[j * N + i]) / 30, (slope(k) - 0.34) * 8));
+      return Math.min(nearWater[k] - 0.72, terrain.wetness(box.minx + i * CELL, box.miny + j * CELL) - 0.08) - slope(k) * 5
+        - (raw[k] < 1 ? 2 : 0) - Math.max(0, urban[q] + 0.1) * 4;
+    }, 5000);
+    contour('landcover', 'rock', (i, j, k) => Math.max((z[k] - 440 - 50 * vary[j * N + i]) / 30, (slope(k) - 0.34) * 8), 1500);
     lap('landcover');
 
     // 6. Towns: streets, blocks, buildings and landmarks from each town's own layout.
@@ -328,13 +359,26 @@ export class WorldGen {
     for (const h of highways) stamp(h.pts, 15);
     for (const m of motorways) stamp(m.pts, 26);
     for (const r of rails) stamp(r.pts, 12);
+    for (const r of ramps) stamp(r, 11);
     const blocked = (b: { x: number; y: number; ring: Pt[] }): boolean =>
       roadMask.get(b.x, b.y) > 0 || b.ring.some(([x, y]) => roadMask.get(x, y) > 0);
     const streets: { kind: string; pts: Pt[] }[] = [];
+    const railArcs: { kind: string; pts: Pt[] }[] = [];
+    // Built-up ground under each town, so the gaps between its districts read as town rather than countryside.
+    const builtUp = near.filter((s) => boxesIntersect(boxPad({ minx: s.x, miny: s.y, maxx: s.x, maxy: s.y }, s.r + 250), box)).map(townDensity);
+    if (builtUp.length) {
+      contour('landuse', 'urban', (i, j, k) => {
+        if (raw[k] < 1.2) return -1;
+        const x = box.minx + i * CELL, y = box.miny + j * CELL;
+        let d = -1;
+        for (const f of builtUp) d = Math.max(d, f(x, y));
+        return d - 0.03;
+      }, 3000);
+    }
     for (const s of near) {
       if (!boxesIntersect(boxPad({ minx: s.x, miny: s.y, maxx: s.x, maxy: s.y }, s.r + 250), box)) continue;
       const town = this.town(s);
-      for (const arc of town.railLinks) { line('rail', 'rail', arc); stamp(arc, 12); }
+      for (const arc of town.railLinks) { line('rail', 'rail', arc); stamp(arc, 12); railArcs.push({ kind: 'rail', pts: arc }); }
       for (const b of town.blocks) {
         const ring = clipPoly(b.ring, box);
         if (ring.length >= 3) poly('landuse', b.kind, [ring]);
@@ -444,6 +488,22 @@ export class WorldGen {
           const half = Math.max(r.width, r.w1) / 2 + 9;
           features.push({ type: 'Feature', properties: { layer: 'bridge', kind: road.kind },
             geometry: { type: 'LineString', coordinates: [[c.x - c.dx * half, c.y - c.dy * half] as Pt, [c.x + c.dx * half, c.y + c.dy * half] as Pt].map(this.ll) } });
+        }
+      }
+    }
+
+    // Where a road meets a railway: main roads go over on a bridge, the rest get a level crossing.
+    for (const rail of [...rails, ...railArcs]) {
+      const rb = boxOf(rail.pts);
+      if (!boxesIntersect(rb, box)) continue;
+      for (const road of [...highways, ...motorways.map((m) => ({ kind: 'motorway', pts: m.pts })), ...streets, ...tracks]) {
+        if (!boxesIntersect(boxOf(road.pts), rb)) continue;
+        for (const c of crossings(road.pts, rail.pts)) {
+          if (!inBox(box, c.x, c.y)) continue;
+          if (road.kind === 'motorway' || road.kind === 'primary' || road.kind === 'secondary') {
+            features.push({ type: 'Feature', properties: { layer: 'bridge', kind: road.kind },
+              geometry: { type: 'LineString', coordinates: [[c.x - c.dx * 13, c.y - c.dy * 13] as Pt, [c.x + c.dx * 13, c.y + c.dy * 13] as Pt].map(this.ll) } });
+          } else point('crossing', 'level', c.x, c.y);
         }
       }
     }

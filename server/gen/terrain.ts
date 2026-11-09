@@ -76,6 +76,11 @@ export class Terrain {
     return fbm(this.s[6], x / 6500, y / 6500, 3) + 0.4 * fbm(this.s[7], x / 650, y / 650, 3);
   }
 
+  /** Broad wet and dry regions, without the small-scale variation of moisture(). */
+  wetness(x: number, y: number): number {
+    return fbm(this.s[6], x / 6500, y / 6500, 3);
+  }
+
   fertility(x: number, y: number): number {
     return fbm(this.s[8], x / 3200, y / 3200, 3);
   }
