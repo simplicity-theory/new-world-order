@@ -30,6 +30,8 @@ parentPort!.on('message', (m) => {
       const data = JSON.stringify(features);
       const overview = JSON.stringify(features.filter(isOverview));
       parentPort!.postMessage({ id: m.id, ok: true, data, overview, features: features.length, timings, genMs: t1 - t0, serializeMs: performance.now() - t1 });
+    } else if (m.type === 'graph') {
+      parentPort!.postMessage({ id: m.id, ok: true, graph: g.roadGraph(m.box) });
     } else if (m.type === 'dem') {
       const t0 = performance.now();
       const grid = g.relief.grid(m.x0, m.y0, m.step, m.size, m.size, m.carve).z;

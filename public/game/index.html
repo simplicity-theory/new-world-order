@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conquer</title>
+<link rel="stylesheet" href="/vendor/maplibre-gl.css">
+<style>
+  :root { --ink: #1f2933; --muted: #5b6672; --line: #cfd6dd; --you: #1f6feb; --panel: #fffffff5; }
+  html, body, #map { margin: 0; height: 100%; }
+  body { font: 13px/1.4 system-ui, sans-serif; color: var(--ink); background: #d9dde0; }
+  button, select, input { font: inherit; padding: 5px 8px; border: 1px solid #b8c0c8; border-radius: 5px; background: #fff; color: var(--ink); }
+  button { cursor: pointer; background: #f3f5f7; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.on, button.primary { background: var(--you); border-color: var(--you); color: #fff; }
+  .card { position: absolute; z-index: 2; background: var(--panel); border-radius: 8px; box-shadow: 0 1px 6px #0003; }
+  #bar { top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 12px; }
+  #bar h1 { margin: 0; font-size: 15px; letter-spacing: 0.04em; }
+  #games { max-width: 190px; }
+  .stat { display: flex; flex-direction: column; line-height: 1.15; }
+  .stat b { font-size: 16px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  #speed { display: flex; gap: 3px; }
+  #speed button { padding: 4px 8px; min-width: 34px; }
+  .spacer { flex: 1; }
+  #panel { top: 78px; right: 12px; width: 290px; max-height: calc(100% - 110px); overflow: auto; padding: 12px; display: none; }
+  #panel h2 { margin: 0; font-size: 16px; }
+  #panel .sub { color: var(--muted); margin-bottom: 10px; }
+  #panel h3 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row button { flex: 1; text-align: left; }
+  .row .cost { float: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .meter { height: 5px; background: #e4e7eb; border-radius: 3px; overflow: hidden; margin: -2px 0 8px; }
+  .meter div { height: 100%; width: 0; background: var(--you); }
+  .send input { width: 52px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  #log { left: 12px; bottom: 28px; padding: 8px 12px; max-width: 320px; color: var(--muted); }
+  #log div:last-child { color: var(--ink); }
+  #toast { left: 50%; transform: translateX(-50%); bottom: 28px; padding: 8px 14px; display: none; }
+  #veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; background: #d9dde0e6; font-size: 16px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="bar" class="card">
+  <h1>CONQUER</h1>
+  <select id="games" aria-label="Game"></select>
+  <button id="new">New game</button>
+  <button id="delete" title="Delete this game">✕</button>
+  <span class="spacer"></span>
+  <div class="stat"><b id="money">–</b><span id="income">money</span></div>
+  <div class="stat"><b id="towns">–</b><span>towns held</span></div>
+  <div class="stat"><b id="clock">–</b><span>time played</span></div>
+  <div id="speed" role="group" aria-label="Game speed">
+    <button data-speed="0" title="Pause">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>
+  </div>
+</div>
+<div id="panel" class="card"></div>
+<div id="log" class="card"></div>
+<div id="toast" class="card"></div>
+<div id="veil"></div>
+<script type="module" src="/game/game.js"></script>
+</body>
+</html>

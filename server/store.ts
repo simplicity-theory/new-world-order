@@ -9,9 +9,6 @@ import { THREADS, run } from './pool.ts';
 // One SQLite file per world. Chunks are frozen once written; every generation and
 // save is timed and logged so the cost of growing a world can be studied later.
 
-// DATA_DIR lets tests keep their worlds away from the real ones.
-const DIR = process.env.DATA_DIR ?? join(import.meta.dirname, '..', 'data', 'worlds');
-mkdirSync(DIR, { recursive: true });
 
 /** Chunk indices covered by a world, inclusive. Worlds are always rectangles. */
 export interface Bounds { x0: number; x1: number; y0: number; y1: number }
@@ -154,10 +151,8 @@ function fmtExpansion(row: Record<string, unknown>): object {
   return round({ ...row, stages });
 }
 
-const open = new Map<string, World>();
-
-function connect(id: string): DatabaseSync {
-  const db = new DatabaseSync(join(DIR, `${id}.sqlite`));
+function connect(dir: string, id: string): DatabaseSync {
+  const db = new DatabaseSync(join(dir, `${id}.sqlite`));
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -177,46 +172,64 @@ function connect(id: string): DatabaseSync {
   return db;
 }
 
-export function listWorlds(): WorldMeta[] {
-  const out: WorldMeta[] = [];
-  for (const f of readdirSync(DIR)) {
-    if (!f.endsWith('.sqlite')) continue;
-    const w = getWorld(f.slice(0, -7));
-    if (w) out.push(w.meta);
+/** A folder of saved worlds. The map explorer and each game keep their worlds in separate folders. */
+export class Store {
+  private dir: string;
+  private open = new Map<string, World>();
+
+  constructor(dir: string) {
+    this.dir = dir;
+    mkdirSync(dir, { recursive: true });
   }
-  return out.sort((a, b) => b.created.localeCompare(a.created));
+
+  list(): WorldMeta[] {
+    const out: WorldMeta[] = [];
+    for (const f of readdirSync(this.dir)) {
+      if (!f.endsWith('.sqlite')) continue;
+      const w = this.get(f.slice(0, -7));
+      if (w) out.push(w.meta);
+    }
+    return out.sort((a, b) => b.created.localeCompare(a.created));
+  }
+
+  get(id: string): World | null {
+    if (!/^[a-z0-9-]+$/.test(id)) return null;
+    let w = this.open.get(id);
+    if (w) return w;
+    if (!readdirSync(this.dir).includes(`${id}.sqlite`)) return null;
+    const db = connect(this.dir, id);
+    const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('world') as { value: string } | undefined;
+    if (!row) { db.close(); return null; }
+    w = new World(db, JSON.parse(row.value));
+    this.open.set(id, w);
+    return w;
+  }
+
+  async create(name: string, seed: string): Promise<World> {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'world';
+    const id = `${slug}-${Date.now().toString(36)}`;
+    const { origin } = await run({ type: 'origin', seed: hashString(seed), origin: null });
+    const meta: WorldMeta = { id, name, seed, created: new Date().toISOString(), origin, bounds: null, gen: GEN_VERSION };
+    const w = new World(connect(this.dir, id), meta);
+    w.saveMeta();
+    this.open.set(id, w);
+    await w.expand(0, []);
+    return w;
+  }
+
+  delete(id: string): boolean {
+    const w = this.get(id);
+    if (!w) return false;
+    w.db.close();
+    this.open.delete(id);
+    for (const ext of ['', '-wal', '-shm']) rmSync(join(this.dir, `${id}.sqlite${ext}`), { force: true });
+    return true;
+  }
 }
 
-export function getWorld(id: string): World | null {
-  if (!/^[a-z0-9-]+$/.test(id)) return null;
-  let w = open.get(id);
-  if (w) return w;
-  if (!readdirSync(DIR).includes(`${id}.sqlite`)) return null;
-  const db = connect(id);
-  const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('world') as { value: string } | undefined;
-  if (!row) { db.close(); return null; }
-  w = new World(db, JSON.parse(row.value));
-  open.set(id, w);
-  return w;
-}
-
-export async function createWorld(name: string, seed: string): Promise<World> {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'world';
-  const id = `${slug}-${Date.now().toString(36)}`;
-  const { origin } = await run({ type: 'origin', seed: hashString(seed), origin: null });
-  const meta: WorldMeta = { id, name, seed, created: new Date().toISOString(), origin, bounds: null, gen: GEN_VERSION };
-  const w = new World(connect(id), meta);
-  w.saveMeta();
-  open.set(id, w);
-  await w.expand(0, []);
-  return w;
-}
-
-export function deleteWorld(id: string): boolean {
-  const w = getWorld(id);
-  if (!w) return false;
-  w.db.close();
-  open.delete(id);
-  for (const ext of ['', '-wal', '-shm']) rmSync(join(DIR, `${id}.sqlite${ext}`), { force: true });
-  return true;
-}
+// DATA_DIR lets tests keep their worlds away from the real ones.
+const worlds = new Store(process.env.DATA_DIR ?? join(import.meta.dirname, '..', 'data', 'worlds'));
+export const listWorlds = (): WorldMeta[] => worlds.list();
+export const getWorld = (id: string): World | null => worlds.get(id);
+export const createWorld = (name: string, seed: string): Promise<World> => worlds.create(name, seed);
+export const deleteWorld = (id: string): boolean => worlds.delete(id);

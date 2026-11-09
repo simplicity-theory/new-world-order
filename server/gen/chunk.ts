@@ -127,6 +127,26 @@ export class WorldGen {
     return pts;
   }
 
+  /**
+   * The settlements in a box and the roads joining them, as plain data in metres from
+   * the world origin. Each road runs centre to centre along the route that is drawn.
+   */
+  roadGraph(box: Box) {
+    const [ox, oy] = this.origin;
+    const local = (p: Pt): Pt => [Math.round(p[0] - ox), Math.round(p[1] - oy)];
+    const id = (s: Settlement) => `${s.a}_${s.b}`;
+    const towns = this.settlements.within(box);
+    const inside = new Set(towns);
+    const roads = this.settlements.highways(box).filter((h) => inside.has(h.a) && inside.has(h.b)).map((h) => ({
+      a: id(h.a), b: id(h.b), kind: h.kind, ref: h.ref,
+      pts: [[h.a.x, h.a.y] as Pt, ...this.highway(h), [h.b.x, h.b.y] as Pt].map(local),
+    }));
+    return {
+      towns: towns.map((s) => ({ id: id(s), name: s.name, tier: s.tier, r: Math.round(s.r), x: Math.round(s.x - ox), y: Math.round(s.y - oy) })),
+      roads,
+    };
+  }
+
   private ll = (p: Pt): Pt => {
     const x = p[0] - this.origin[0], y = p[1] - this.origin[1];
     const lon = (x / R_EARTH) * DEG;

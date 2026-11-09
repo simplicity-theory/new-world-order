@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { createWorld, deleteWorld, getWorld, listWorlds, type Side } from './store.ts';
+import { games, handleConquer } from './game/conquer.ts';
 import { getDemTile, getTile } from './tiles.ts';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -11,6 +12,8 @@ const STATIC: Record<string, [string, string]> = {
   '/': ['public/index.html', 'text/html; charset=utf-8'],
   '/app.js': ['public/app.js', 'text/javascript; charset=utf-8'],
   '/style.js': ['public/style.js', 'text/javascript; charset=utf-8'],
+  '/conquer': ['public/game/index.html', 'text/html; charset=utf-8'],
+  '/game/game.js': ['public/game/game.js', 'text/javascript; charset=utf-8'],
   '/vendor/maplibre-gl.css': ['node_modules/maplibre-gl/dist/maplibre-gl.css', 'text/css'],
   '/vendor/maplibre-gl.mjs': ['node_modules/maplibre-gl/dist/maplibre-gl.mjs', 'text/javascript'],
   '/vendor/maplibre-gl-shared.mjs': ['node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs', 'text/javascript'],
@@ -43,6 +46,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (path === '/favicon.ico') { res.writeHead(204); res.end(); return; }
 
+  if (path.startsWith('/api/conquer') && await handleConquer(req, res, path, method, () => body(req))) return;
+
   if (path === '/api/worlds' && method === 'GET') return json(res, 200, listWorlds());
   if (path === '/api/worlds' && method === 'POST') {
     const b = await body(req);
@@ -52,18 +57,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return json(res, 201, w.info());
   }
 
-  const m = path.match(/^\/api\/worlds\/([a-z0-9-]+)(?:\/(.*))?$/);
+  // Game worlds share the map routes for tiles and statistics, but only the game may change them.
+  const m = path.match(/^\/api\/(worlds|conquer)\/([a-z0-9-]+)(?:\/(.*))?$/);
   if (m) {
-    const world = getWorld(m[1]);
+    const explorer = m[1] === 'worlds';
+    const world = explorer ? getWorld(m[2]) : games.get(m[2]);
     if (!world) return json(res, 404, { error: 'no such world' });
-    const rest = m[2] ?? '';
+    const rest = m[3] ?? '';
     if (rest === '' && method === 'GET') return json(res, 200, world.info());
-    if (rest === '' && method === 'DELETE') {
+    if (rest === '' && method === 'DELETE' && explorer) {
       if (world.job) return json(res, 409, { error: 'world is expanding' });
-      return json(res, 200, { deleted: deleteWorld(m[1]) });
+      return json(res, 200, { deleted: deleteWorld(m[2]) });
     }
     if (rest === 'stats' && method === 'GET') return json(res, 200, world.stats());
-    if (rest === 'expand' && method === 'POST') {
+    if (rest === 'expand' && method === 'POST' && explorer) {
       if (world.job) return json(res, 409, { error: 'already expanding' });
       const b = await body(req);
       const km = Math.min(20, Math.max(0.1, Number(b.km) || 2));
