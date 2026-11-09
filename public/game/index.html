@@ -6,14 +6,16 @@
 <title>Conquer</title>
 <link rel="stylesheet" href="/vendor/maplibre-gl.css">
 <style>
-  :root { --ink: #1f2933; --muted: #5b6672; --line: #cfd6dd; --you: #1f6feb; --panel: #fffffff5; }
+  :root { --ink: #1f2933; --muted: #5b6672; --line: #cfd6dd; --you: #1f6feb; --foe: #d1345b; --warn: #d97706; --panel: #fffffff5; }
   html, body, #map { margin: 0; height: 100%; }
-  body { font: 13px/1.4 system-ui, sans-serif; color: var(--ink); background: #d9dde0; }
+  body { font: 13px/1.4 system-ui, sans-serif; color: var(--ink); background: #d9dde0; overflow: hidden; }
   button, select, input { font: inherit; padding: 5px 8px; border: 1px solid #b8c0c8; border-radius: 5px; background: #fff; color: var(--ink); }
   button { cursor: pointer; background: #f3f5f7; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.on, button.primary { background: var(--you); border-color: var(--you); color: #fff; }
+  kbd { font: 600 10.5px/1 ui-monospace, monospace; padding: 2px 4px; border: 1px solid #b8c0c8; border-bottom-width: 2px; border-radius: 4px; background: #fff; color: var(--ink); }
   .card { position: absolute; z-index: 2; background: var(--panel); border-radius: 8px; box-shadow: 0 1px 6px #0003; }
+
   #bar { top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 12px; }
   #bar h1 { margin: 0; font-size: 15px; letter-spacing: 0.04em; }
   #games { max-width: 190px; }
@@ -23,30 +25,122 @@
   #speed { display: flex; gap: 3px; }
   #speed button { padding: 4px 8px; min-width: 34px; }
   .spacer { flex: 1; }
-  #panel { top: 78px; right: 12px; width: 310px; max-height: calc(100% - 110px); overflow: auto; padding: 12px; display: none; }
-  #panel h2 { margin: 0; font-size: 16px; }
-  #panel .sub { color: var(--muted); margin-bottom: 10px; }
-  #panel h3 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-  .row button { flex: 1; text-align: left; }
-  .row .cost { float: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
-  .meter { height: 5px; background: #e4e7eb; border-radius: 3px; overflow: hidden; margin: -2px 0 8px; }
-  .meter div { height: 100%; width: 0; background: var(--you); }
-  .send input { width: 52px; }
+
+  /* Command bar: who is selected, their units as cards, and square slots for what they can do. */
+  #cmd { left: 354px; right: 190px; bottom: 14px; max-width: 980px; padding: 10px 12px; display: none; gap: 14px; align-items: stretch; }
+  .who { flex: none; width: 168px; padding-left: 10px; border-left: 5px solid var(--c, #7d848c); display: flex; flex-direction: column; justify-content: center; }
+  .who h2 { margin: 0; font-size: 17px; line-height: 1.15; }
+  .who .sub { color: var(--muted); font-size: 12px; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); font-variant-numeric: tabular-nums; cursor: help; }
+  .chip svg { width: 15px; height: 15px; }
+  .chip b { color: var(--ink); }
+  .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+  .pick { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .pick b { color: var(--ink); font-size: 13px; }
+  .pick > span:first-child { white-space: nowrap; }
+  .tip { color: var(--muted); font-size: 11.5px; margin-left: auto; text-align: right; }
+  .mid > .tip { margin: 0; text-align: left; }
+  .tray { display: flex; flex-wrap: wrap; gap: 5px; max-height: 100px; overflow: auto; padding: 2px; }
+  .tray.empty { color: var(--muted); align-items: center; min-height: 40px; }
+  .unit { position: relative; width: 38px; height: 46px; padding: 0; display: grid; place-items: center; border: 2px solid var(--c); border-radius: 5px; background: #fff; color: var(--c); }
+  .unit svg { width: 25px; height: 25px; }
+  .unit.in { background: var(--c); color: #fff; box-shadow: 0 0 0 2px #f5b301; }
+  .unit.out { opacity: 0.45; }
+  .unit.out:hover { opacity: 0.8; }
+  .unit.fixed { opacity: 1; cursor: default; background: color-mix(in srgb, var(--c) 14%, #fff); }
+  .unit .n { position: absolute; right: -4px; bottom: -4px; min-width: 14px; padding: 0 2px; border-radius: 7px; background: var(--ink); color: #fff; font: 600 9.5px/14px system-ui, sans-serif; text-align: center; }
+  .mini { padding: 2px 7px; font-size: 11.500px; }
+  .slots { flex: none; display: flex; gap: 5px; align-items: flex-start; }
+  .slots .gap { width: 7px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 50px; }
+  .slot { position: relative; width: 48px; height: 48px; padding: 0; display: grid; place-items: center; border-radius: 7px; overflow: hidden; }
+  .slot .ico svg { width: 26px; height: 26px; display: block; }
+  .slot kbd { position: absolute; left: 2px; top: 2px; font-size: 9px; padding: 1px 3px; border-bottom-width: 1px; opacity: 0.9; }
+  .slot.empty { border-style: dashed; }
+  .slot.empty .ico { opacity: 0.55; }
+  .slot.set { border-color: var(--you); color: var(--you); }
+  .slot .count { position: absolute; right: 2px; top: 2px; min-width: 15px; border-radius: 8px; background: var(--you); color: #fff; font: 600 10px/15px system-ui, sans-serif; text-align: center; }
+  .slot .pips { position: absolute; bottom: 4px; left: 0; right: 0; display: flex; justify-content: center; gap: 3px; }
+  .slot .pips i { width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid currentColor; }
+  .slot .pips i.on { background: currentColor; }
+  /* Clock wipe: the dark part is the work still to do. */
+  .slot .wipe { position: absolute; inset: 0; display: none; pointer-events: none; background: conic-gradient(#0000 calc(var(--p, 0) * 1%), #1f293359 0); }
+  .slot.poor .ico { opacity: 0.4; }
+  .slot.poor { border-color: #d9a0a0; }
+
+  /* Production sidebar: every base and factory you own. */
+  #prod { top: 78px; right: 12px; padding: 8px 8px 6px; display: none; max-height: calc(100% - 330px); overflow: auto; }
+  #prod header { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 2px 6px; }
+  .prow { display: flex; align-items: center; gap: 5px; padding: 3px; border-radius: 6px; }
+  .prow.sel { background: #fff3cd; }
+  .pname { flex: 1; width: 92px; padding: 3px 4px; border: 0; background: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname:hover { text-decoration: underline; }
+  .tile { width: 40px; height: 40px; flex: none; }
+  .tile.none { display: inline-block; }
+  .tile .ico svg { width: 22px; height: 22px; }
+  .tile.looping { box-shadow: inset 0 0 0 2px var(--you); }
+  .cap { font-size: 10.5px; line-height: 1.15; color: var(--muted); text-align: center; max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .repeat { align-self: flex-start; width: 22px; height: 22px; padding: 2px; margin-left: -3px; display: grid; place-items: center; }
+  .repeat svg { width: 14px; height: 14px; }
   .hint { color: var(--muted); font-size: 12px; }
-  #log { left: 12px; bottom: 28px; padding: 8px 12px; max-width: 320px; color: var(--muted); }
-  #log div:last-child { color: var(--ink); }
-  #toast { left: 50%; transform: translateX(-50%); bottom: 28px; padding: 8px 14px; display: none; }
+
+  #panel { top: 78px; right: 222px; width: 290px; max-height: calc(100% - 230px); overflow: auto; padding: 12px; display: none; }
+  #panel h3 { margin: 10px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  #panel h3:first-child { margin-top: 0; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row.road { align-items: flex-start; }
+  .row.road button { flex: none; }
+  .cost { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: 0.85; }
+  .send input { width: 52px; }
+
+  /* Event log: recent events; click one to go there. */
+  #log { left: 12px; bottom: 14px; width: 330px; padding: 8px 0 6px; }
+  #log header { display: flex; align-items: center; padding: 0 12px 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  #log header button { margin-left: auto; padding: 1px 7px; font-size: 11px; }
+  #events { max-height: 88px; overflow: hidden; }
+  #log.open #events { max-height: 46vh; overflow: auto; }
+  #events div { padding: 3px 12px; color: var(--muted); }
+  #events div[data-x] { cursor: pointer; }
+  #events div[data-x]:hover { background: #e9eef5; }
+  #events div.win { color: #1c5c2e; }
+  #events div.loss { color: #8a1535; }
+  #events div:last-child { color: var(--ink); font-weight: 500; }
+  #events time { font-variant-numeric: tabular-nums; opacity: 0.7; margin-right: 6px; }
+
+  #toast { left: 50%; transform: translateX(-50%); top: 76px; padding: 8px 14px; display: none; max-width: 70%; }
+  #help { top: 76px; left: 12px; padding: 12px 16px; display: none; z-index: 4; }
+  #help table { border-collapse: collapse; }
+  #help td { padding: 2px 10px 2px 0; }
+  #veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; background: #d9dde0e6; font-size: 16px; }
   #box { position: absolute; z-index: 3; display: none; border: 2px solid var(--you); background: #1f6feb22; pointer-events: none; }
   #result { position: absolute; inset: 0; z-index: 4; display: none; align-items: center; justify-content: center; background: #1f293366; }
   #result .card { position: static; padding: 22px 28px; text-align: center; }
   #result h2 { margin: 0; font-size: 26px; letter-spacing: 0.04em; }
-  .check { display: flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
-  .check input { padding: 0; }
-  .row.road { align-items: flex-start; }
-  .row.road button { flex: none; }
-  .row.road .cost { float: none; margin-left: 6px; }
-  #veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; background: #d9dde0e6; font-size: 16px; }
+
+  /* Town badges on the map. */
+  .badge { display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 10px; border: 2px solid var(--c, #7d848c); background: #fffffff2;
+    font: 600 11.5px/1.2 system-ui, sans-serif; color: var(--ink); cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px #0003; }
+  .badge.sel { box-shadow: 0 0 0 3px #f5b301; }
+  .badge.threat { animation: threat 0.9s ease-in-out infinite alternate; }
+  @keyframes threat { from { box-shadow: 0 0 0 0 #d1345b00; } to { box-shadow: 0 0 0 5px #d1345baa; } }
+  @media (prefers-reduced-motion: reduce) { .badge.threat { animation: none; box-shadow: 0 0 0 4px #d1345baa; } }
+  .badge svg { width: 13px; height: 13px; flex: none; }
+  .badge .lvl { font-size: 9.5px; margin-left: -3px; }
+  .badge .dim { opacity: 0.35; }
+  .badge .muted { color: var(--muted); font-weight: 500; }
+  .badge.small { padding: 1px 5px; font-size: 10.5px; }
+  .badge.small .extra { display: none; }
+
+  /* Battle reports that pop up where a fight happened. */
+  .report .maplibregl-popup-content { padding: 8px 12px; border-radius: 8px; font: 12.5px/1.35 system-ui, sans-serif; border-top: 4px solid var(--muted); }
+  .report.won .maplibregl-popup-content { border-top-color: #2e7d32; }
+  .report.lost .maplibregl-popup-content { border-top-color: var(--foe); }
+  .report b { font-size: 13.5px; }
+  .report table { border-collapse: collapse; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .report td, .report th { padding: 1px 8px 1px 0; text-align: left; font-weight: 400; }
+  .report th { color: var(--muted); font-size: 11px; }
 </style>
 </head>
 <body>
@@ -56,16 +150,37 @@
   <select id="games" aria-label="Game"></select>
   <button id="new">New game</button>
   <button id="delete" title="Delete this game">✕</button>
+  <button id="keys" title="Keyboard shortcuts">?</button>
   <span class="spacer"></span>
   <div class="stat"><b id="money">–</b><span id="income">money</span></div>
   <div class="stat"><b id="towns">–</b><span id="goal">towns held</span></div>
   <div class="stat"><b id="clock">–</b><span>time played</span></div>
   <div id="speed" role="group" aria-label="Game speed">
-    <button data-speed="0" title="Pause">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>
+    <button data-speed="0" title="Pause (Space)">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>
   </div>
 </div>
+<div id="help" class="card">
+  <table>
+    <tr><td><kbd>Space</kbd></td><td>Pause or resume</td></tr>
+    <tr><td><kbd>−</kbd> <kbd>=</kbd></td><td>Slower, faster</td></tr>
+    <tr><td><kbd>Tab</kbd></td><td>Next town of yours with units waiting</td></tr>
+    <tr><td><kbd>H</kbd></td><td>Go to your capital</td></tr>
+    <tr><td><kbd>J</kbd></td><td>Jump to the latest event</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>9</kbd></td><td>Save the selected towns as a group</td></tr>
+    <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Select that group; press twice to go there</td></tr>
+    <tr><td>Letter keys</td><td>The actions shown on the command bar</td></tr>
+    <tr><td>Unit cards</td><td>Click for one, Ctrl-click to add, Shift-click for a run, double-click for a kind, <kbd>A</kbd> for all</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Cancel, then clear the selection</td></tr>
+    <tr><td>Right-click</td><td>Send the selection to a town</td></tr>
+    <tr><td>Training tiles</td><td>Click to queue one, Shift-click for five, right-click to cancel one</td></tr>
+    <tr><td>Shift-drag</td><td>Select every town of yours in a box</td></tr>
+    <tr><td>Ctrl-click</td><td>Add or remove a town from the selection</td></tr>
+  </table>
+</div>
 <div id="panel" class="card"></div>
-<div id="log" class="card"></div>
+<div id="prod" class="card"></div>
+<div id="log" class="card"><header>Events <button id="log-toggle" title="Show more or fewer events">more</button></header><div id="events"></div></div>
+<div id="cmd" class="card"></div>
 <div id="toast" class="card"></div>
 <div id="veil"></div>
 <div id="box"></div>

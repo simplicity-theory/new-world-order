@@ -49,10 +49,19 @@ export interface State {
   towns: Record<string, TownState>;
   groups: Group[];
   nextId: number;
-  events: { clock: number; to: number; text: string }[];
+  events: GameEvent[];
   winner: number | null;
   dismissed: boolean;       // the player chose to keep playing after the game was decided
 }
+/** One side's account of a fight, attached to the event that reports it. */
+export interface Report {
+  kind: 'assault' | 'defence' | 'field';
+  place: string;
+  won: boolean;
+  you: { before: Units; after: Units; power: number };
+  them: { owner: number; before: Units; after: Units; power: number };
+}
+export interface GameEvent { id: number; clock: number; to: number; text: string; at?: Pt; report?: Report }
 export type Result = { ok: true } | { error: string };
 export type RawGraph = { towns: TownNode[]; roads: Omit<Road, 'length' | 'intact' | 'cutAt' | 'repair'>[] };
 
@@ -183,9 +192,9 @@ export class Sim {
     }
   }
 
-  note(text: string, to = PLAYER): void {
-    this.state.events.push({ clock: this.state.clock, to, text });
-    if (this.state.events.length > 60) this.state.events.shift();
+  note(text: string, to = PLAYER, extra: { at?: Pt; report?: Report } = {}): void {
+    this.state.events.push({ id: this.state.nextId++, clock: this.state.clock, to, text, ...extra });
+    if (this.state.events.length > 240) this.state.events.shift();
   }
 
   faction(id: number): Faction {
@@ -292,23 +301,30 @@ export class Sim {
 
   // ----- Fighting and capture -----
 
-  /** A group attacks a town. Returns true if the town fell; either way the group is used up. */
+  /** A group attacks a town. Either it takes the town and becomes its garrison, or it is destroyed. */
   private assault(g: Group, id: string, onTheWay: boolean): void {
     const s = this.state, town = s.towns[id], node = this.nodes.get(id)!;
-    const result = fight(g, attackPower(g), town.garrison, defencePower(town.garrison, this.defenceOf(id)));
-    const before = town.owner, lostA = count(g) - count(result.att), lostD = count(town.garrison) - count(result.def);
+    const ap = attackPower(g), dp = defencePower(town.garrison, this.defenceOf(id));
+    const attackers: Units = { infantry: g.infantry, vehicle: g.vehicle }, defenders: Units = { ...town.garrison };
+    const result = fight(g, ap, town.garrison, dp);
+    const before = town.owner, lostA = count(g) - count(result.att), lostD = count(defenders) - count(result.def);
+    const at: Pt = [node.x, node.y];
+    const forAttacker: Report = { kind: 'assault', place: node.name, won: result.win,
+      you: { before: attackers, after: result.att, power: ap }, them: { owner: before, before: defenders, after: result.def, power: dp } };
+    const forDefender: Report = { kind: 'defence', place: node.name, won: !result.win,
+      you: { before: defenders, after: result.def, power: dp }, them: { owner: g.owner, before: attackers, after: result.att, power: ap } };
     if (!result.win) {
       town.garrison = result.def;
-      this.note(`Your attack on ${node.name} failed: ${count(g)} lost, ${lostD} defenders killed.`, g.owner);
-      if (before !== NEUTRAL) this.note(`${node.name} held against an attack, losing ${lostD} of its defenders.`, before);
+      this.note(`Your attack on ${node.name} failed: ${count(g)} lost, ${lostD} defenders killed.`, g.owner, { at, report: forAttacker });
+      if (before !== NEUTRAL) this.note(`${node.name} held against an attack, losing ${lostD} of its defenders.`, before, { at, report: forDefender });
       return;
     }
     town.owner = g.owner;
     town.garrison = result.att;
     town.rally = null;
     for (const b of Object.values(town.buildings)) { b.queue = 0; b.training = 0; b.repeat = false; if (!b.done) b.progress = 0; }
-    this.note(`${node.name} captured${lostA ? `, ${lostA} lost` : ''}${onTheWay ? '; the group halted there' : ''}.`, g.owner);
-    if (before !== NEUTRAL) this.note(`${node.name} was lost to the ${g.owner === PLAYER ? 'player' : this.faction(g.owner).name.toLowerCase()}.`, before);
+    this.note(`${node.name} captured${lostA ? `, ${lostA} lost` : ''}${onTheWay ? '; the group halted there' : ''}.`, g.owner, { at, report: forAttacker });
+    if (before !== NEUTRAL) this.note(`${node.name} was lost to the ${g.owner === PLAYER ? 'player' : this.faction(g.owner).name.toLowerCase()}.`, before, { at, report: forDefender });
     // Losing a capital ends the game for that side.
     const loser = s.factions.find((f) => f.id !== NEUTRAL && f.capital === id && f.id !== g.owner);
     if (loser) {
@@ -320,12 +336,21 @@ export class Sim {
 
   /** Two hostile groups meet on a road and fight it out; the loser is destroyed. */
   private meet(a: Group, b: Group): void {
-    const result = fight(a, attackPower(a), b, attackPower(b));
+    const pa = attackPower(a), pb = attackPower(b);
+    const ua: Units = { infantry: a.infantry, vehicle: a.vehicle }, ub: Units = { infantry: b.infantry, vehicle: b.vehicle };
+    const result = fight(a, pa, b, pb);
     const [winner, loser, left] = result.win ? [a, b, result.att] : [b, a, result.def];
     const road = this.roads.get(a.path[a.leg].road)!;
-    const where = `between ${this.nodes.get(road.a)!.name} and ${this.nodes.get(road.b)!.name}`;
-    this.note(`Your group won a fight ${where}, losing ${count(winner) - count(left)}.`, winner.owner);
-    this.note(`Your group of ${count(loser)} was destroyed ${where}.`, loser.owner);
+    const place = `between ${this.nodes.get(road.a)!.name} and ${this.nodes.get(road.b)!.name}`;
+    const at = this.position(a);
+    const report = (mine: Group): Report => {
+      const iAmA = mine === a;
+      return { kind: 'field', place, won: mine === winner,
+        you: { before: iAmA ? ua : ub, after: mine === winner ? left : none(), power: iAmA ? pa : pb },
+        them: { owner: (iAmA ? b : a).owner, before: iAmA ? ub : ua, after: mine === winner ? none() : left, power: iAmA ? pb : pa } };
+    };
+    this.note(`Your group won a fight ${place}, losing ${count(winner) - count(left)}.`, winner.owner, { at, report: report(winner) });
+    this.note(`Your group of ${count(loser)} was destroyed ${place}.`, loser.owner, { at, report: report(loser) });
     winner.infantry = left.infantry;
     winner.vehicle = left.vehicle;
     this.state.groups.splice(this.state.groups.indexOf(loser), 1);
@@ -512,6 +537,17 @@ export class Sim {
         b.queue++;
         return { ok: true };
       }
+      case 'cancel': {
+        // Take one unit off the training queue and give the money back.
+        const unit = c.unit as UnitKind, rule = RULES.units[unit];
+        if (!mine) return fail('not your town');
+        const b = rule && (Object.entries(town.buildings) as [BuildingKind, Building][]).find(([k, v]) => v.done && RULES.buildings[k].trains === unit)?.[1];
+        if (!b || b.queue < 1) return fail('nothing in training');
+        b.queue--;
+        if (!b.queue) b.training = 0;
+        me.money += rule.cost;
+        return { ok: true };
+      }
       case 'upgrade': {
         const kind = c.upgrade as UpgradeKind;
         if (!mine) return fail('not your town');
@@ -612,7 +648,7 @@ export class Sim {
       towns,
       groups: s.groups.filter((g) => g.owner === who || this.canSee(who, this.position(g))),
       roads: s.graph.roads.filter((r) => !r.intact).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
-      events: s.events.filter((e) => e.to === who).slice(-6),
+      events: s.events.filter((e) => e.to === who).slice(-40),
       winner: s.winner, dismissed: s.dismissed,
       goal: Math.ceil(s.graph.towns.length * RULES.winShare),
     };

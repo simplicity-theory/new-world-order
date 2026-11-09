@@ -6,6 +6,7 @@ import { Store, type Side, type World } from '../store.ts';
 import { think } from './ai.ts';
 import { PLAYER, RULES } from './rules.ts';
 import { Sim, UNIT_KINDS, mergeGraph, newState, type RawGraph, type State, type TownNode } from './sim.ts';
+import { territory, type Territory } from './territory.ts';
 
 // Conquer's server side: loading and saving games, running the clock, streaming the game
 // to the page and taking its commands. The rules themselves live in sim.ts.
@@ -22,6 +23,8 @@ export class Game {
   private last = 0;
   private dirty = 0;
   private growing = false;
+  private landKey = '';
+  private land: Territory[] = [];
 
   private constructor(world: World, state: State) {
     this.world = world;
@@ -89,9 +92,22 @@ export class Game {
     return { ...this.sim.view(PLAYER), growing: this.growing };
   }
 
+  /** Who controls which land, as far as the player knows. Recomputed only when a town or road changes hands or state. */
+  private territory(): Territory[] {
+    const view = this.sim.view(PLAYER).towns as Record<string, { owner: number }>;
+    const owners = Object.fromEntries(Object.entries(view).map(([id, t]) => [id, t.owner]));
+    const key = JSON.stringify([owners, this.sim.state.graph.roads.map((r) => r.intact), this.world.meta.bounds]);
+    if (key !== this.landKey) {
+      this.landKey = key;
+      this.land = territory(this.sim.state.graph, owners, this.world.info().boundsM);
+      return this.land;
+    }
+    return this.land;
+  }
+
   /** The whole game, including the map graph. Sent once on load and again when the map grows. */
   full() {
-    return { world: this.world.info(), rules: RULES, unitKinds: UNIT_KINDS, graph: this.sim.state.graph, live: this.live() };
+    return { world: this.world.info(), rules: RULES, unitKinds: UNIT_KINDS, graph: this.sim.state.graph, live: this.live(), territory: this.territory() };
   }
 
   private send(event: string, data: unknown): void {
@@ -103,6 +119,7 @@ export class Game {
   attach(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     res.write(`event: tick\ndata: ${JSON.stringify(this.live())}\n\n`);
+    res.write(`event: territory\ndata: ${JSON.stringify(this.territory())}\n\n`);
     this.clients.add(res);
     req.on('close', () => {
       this.clients.delete(res);
@@ -122,6 +139,8 @@ export class Game {
     // The clock stops when the game is decided, until the player chooses to carry on.
     if (s.speed > 0 && (s.winner === null || s.dismissed)) { this.sim.step(real * s.speed); this.dirty++; }
     this.send('tick', this.live());
+    const before = this.land;
+    if (this.territory() !== before) this.send('territory', this.land);
     if (this.dirty > 25) this.save();
   }
 

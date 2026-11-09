@@ -65,6 +65,18 @@ test('building and training take money and time', () => {
   assert.deepEqual(sim.command({ type: 'build', town: 'a', building: 'barracks' }), { error: 'not your town' });
 });
 
+test('cancelling takes a unit off the queue and refunds it', () => {
+  const { sim, s, me } = game();
+  s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+  assert.deepEqual(sim.command({ type: 'cancel', town: 'c', unit: 'infantry' }), { error: 'nothing in training' });
+  sim.command({ type: 'train', town: 'c', unit: 'infantry' });
+  sim.command({ type: 'train', town: 'c', unit: 'infantry' });
+  const before = me.money;
+  assert.deepEqual(sim.command({ type: 'cancel', town: 'c', unit: 'infantry' }), { ok: true });
+  assert.equal(s.towns.c.buildings.barracks!.queue, 1);
+  assert.equal(me.money, before + RULES.units.infantry.cost);
+});
+
 test('repeat training keeps queueing while there is money', () => {
   const { sim, s } = game();
   s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
