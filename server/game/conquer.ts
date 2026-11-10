@@ -6,7 +6,7 @@ import { Store, type Side, type World } from '../store.ts';
 import { think } from './ai.ts';
 import { PLAYER, RULES } from './rules.ts';
 import { Sim, UNIT_KINDS, mergeGraph, newState, type RawGraph, type State, type TownNode } from './sim.ts';
-import { territory, type Territory } from './territory.ts';
+import { sight, territory, type Territory } from './territory.ts';
 
 // Conquer's server side: loading and saving games, running the clock, streaming the game
 // to the page and taking its commands. The rules themselves live in sim.ts.
@@ -25,6 +25,8 @@ export class Game {
   private growing = false;
   private landKey = '';
   private land: Territory[] = [];
+  private sightKey = '';
+  private ticks = 0;
 
   private constructor(world: World, state: State) {
     this.world = world;
@@ -82,6 +84,20 @@ export class Game {
   }
 
   command(c: Record<string, unknown>) {
+    // For automated tests only: with CONQUER_DEBUG set, a 'debug' command can hand out money and units and alter towns.
+    if (c.type === 'debug' && process.env.CONQUER_DEBUG) {
+      const s = this.sim.state, t = typeof c.town === 'string' ? s.towns[c.town] : undefined;
+      if (typeof c.money === 'number') this.sim.faction(PLAYER).money = c.money;
+      if (t && typeof c.owner === 'number') t.owner = c.owner;
+      if (t && typeof c.infantry === 'number') t.garrison.infantry = c.infantry;
+      if (t && typeof c.vehicle === 'number') t.garrison.vehicle = c.vehicle;
+      if (t && typeof c.fort === 'number') t.fort = c.fort;
+      if (t && c.barracks) t.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+      if (t && c.factory) t.buildings.factory = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+      this.sim.refresh();
+      this.send('tick', this.live());
+      return { ok: true as const };
+    }
     const result = this.sim.command(c, PLAYER);
     if ('ok' in result) { this.dirty++; this.send('tick', this.live()); }
     return result;
@@ -105,9 +121,18 @@ export class Game {
     return this.land;
   }
 
+  /** The area the player can see right now, or null if it has not changed since it was last asked for. */
+  private sight(force = false) {
+    const eyes = this.sim.eyes(PLAYER).map(([x, y, r]) => [Math.round(x / 50) * 50, Math.round(y / 50) * 50, r] as [number, number, number]);
+    const key = JSON.stringify([eyes, this.world.meta.bounds]);
+    if (key === this.sightKey && !force) return null;
+    this.sightKey = key;
+    return sight(eyes, this.world.info().boundsM);
+  }
+
   /** The whole game, including the map graph. Sent once on load and again when the map grows. */
   full() {
-    return { world: this.world.info(), rules: RULES, unitKinds: UNIT_KINDS, graph: this.sim.state.graph, live: this.live(), territory: this.territory() };
+    return { world: this.world.info(), rules: RULES, unitKinds: UNIT_KINDS, graph: this.sim.state.graph, live: this.live(), territory: this.territory(), sight: this.sight(true) };
   }
 
   private send(event: string, data: unknown): void {
@@ -120,6 +145,7 @@ export class Game {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     res.write(`event: tick\ndata: ${JSON.stringify(this.live())}\n\n`);
     res.write(`event: territory\ndata: ${JSON.stringify(this.territory())}\n\n`);
+    res.write(`event: sight\ndata: ${JSON.stringify(this.sight(true))}\n\n`);
     this.clients.add(res);
     req.on('close', () => {
       this.clients.delete(res);
@@ -141,6 +167,8 @@ export class Game {
     this.send('tick', this.live());
     const before = this.land;
     if (this.territory() !== before) this.send('territory', this.land);
+    // Sight changes whenever an army moves, so it is refreshed a couple of times a second at most.
+    if (++this.ticks % 3 === 0) { const seen = this.sight(); if (seen) this.send('sight', seen); }
     if (this.dirty > 25) this.save();
   }
 

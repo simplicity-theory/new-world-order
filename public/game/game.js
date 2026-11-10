@@ -16,6 +16,7 @@ let map = null;
 let game = null;        // world, rules and the town/road graph
 let live = null;        // what changes every tick
 let land = [];          // territory polygons
+let seen = [];          // rings around what you can currently see
 let tickAt = 0;
 let stream = null;
 let selTowns = [];      // selected town ids
@@ -177,7 +178,7 @@ const ring = (pts) => { const c = pts.map(([x, y]) => toLngLat(x, y)); c.push(c[
 const lineOf = (pts) => pts.map(([x, y]) => toLngLat(x, y));
 
 function addOverlay() {
-  const sources = ['cq-land', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
+  const sources = ['cq-land', 'cq-fog', 'cq-paths', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
   for (const id of sources) map.addSource(id, { type: 'geojson', data: empty });
   // The game draws its own town names, so the map's are hidden.
   if (map.getLayer('place')) map.setLayoutProperty('place', 'visibility', 'none');
@@ -185,6 +186,14 @@ function addOverlay() {
   // Territory: a wash of each side's colour over the land it controls, with the front line dashed.
   map.addLayer({ id: 'cq-land', type: 'fill', source: 'cq-land', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.16 } });
   map.addLayer({ id: 'cq-front', type: 'line', source: 'cq-land', paint: { 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.6, 'line-dasharray': [3, 2] } });
+  // Fog: everything out of sight is dimmed.
+  map.addLayer({ id: 'cq-fog', type: 'fill', source: 'cq-fog', paint: { 'fill-color': '#27313d', 'fill-opacity': 0.3, 'fill-antialias': false } });
+  // Where armies are heading: the selected army in blue, enemy armies in sight in red.
+  map.addLayer({ id: 'cq-paths', type: 'line', source: 'cq-paths', layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': ['get', 'color'], 'line-width': 3.5, 'line-opacity': 0.75, 'line-dasharray': [0.4, 1.8] } });
+  map.addLayer({ id: 'cq-path-arrows', type: 'symbol', source: 'cq-paths',
+    layout: { 'symbol-placement': 'line', 'symbol-spacing': 90, 'text-field': '▶', 'text-size': 13, 'text-font': ['sans-serif'], 'text-keep-upright': false, 'text-allow-overlap': true },
+    paint: { 'text-color': ['get', 'color'], 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 } });
   map.addLayer({ id: 'cq-area', type: 'fill', source: 'cq-areas', paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fill'] } });
   map.addLayer({ id: 'cq-area-edge', type: 'line', source: 'cq-areas',
     paint: { 'line-color': ['case', ['==', ['get', 'selected'], 1], '#f5b301', ['get', 'color']], 'line-width': ['case', ['==', ['get', 'selected'], 1], 4, 2.2],
@@ -216,12 +225,48 @@ function addOverlay() {
     layout: { ...text, 'text-field': ['get', 'label'], 'text-size': 10.5 }, paint: { 'text-color': '#ffffff' } });
   drawStatic(true);
   drawLand();
+  drawFog();
 }
 
 function drawLand() {
   if (!map?.getSource('cq-land') || !live) return;
   map.getSource('cq-land').setData(collection(land.map((p) => ({ type: 'Feature', properties: { color: colorOf(p.owner) },
     geometry: { type: 'Polygon', coordinates: p.rings.map((r) => ring(r)[0]) } }))));
+}
+
+function drawFog() {
+  if (!map?.getSource('cq-fog') || !game) return;
+  const b = game.world.boundsM;
+  const outer = ring([[b.minx, b.miny], [b.maxx, b.miny], [b.maxx, b.maxy], [b.minx, b.maxy]])[0];
+  map.getSource('cq-fog').setData({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [outer, ...seen.map((r) => ring(r)[0])] } });
+}
+
+/** The road still ahead of an army, from where it is to where it is going. */
+function pathAhead(a) {
+  const pts = [armyPoint(a)];
+  a.path.slice(a.leg).forEach((leg, k) => {
+    const road = roadOf(leg.road), line = leg.rev ? [...road.pts].reverse() : road.pts;
+    if (k > 0) return pts.push(...line);
+    // On the current leg, keep only what lies beyond the army.
+    let d = a.dist;
+    for (let i = 0; i + 1 < line.length; i++) {
+      const l = Math.hypot(line[i + 1][0] - line[i][0], line[i + 1][1] - line[i][1]);
+      if (d < l) { pts.push(...line.slice(i + 1)); break; }
+      d -= l;
+    }
+  });
+  return pts;
+}
+
+let pathsKey = '';
+function drawPaths() {
+  if (!map?.getSource('cq-paths') || !live) return;
+  const shown = live.armies.filter((a) => !a.at && a.path.length && (a.owner !== PLAYER || a.id === selArmy));
+  const key = JSON.stringify(shown.map((a) => [a.id, a.leg, Math.round(a.dist / 150), a.to]));
+  if (key === pathsKey) return;
+  pathsKey = key;
+  map.getSource('cq-paths').setData(collection(shown.map((a) => ({ type: 'Feature', properties: { color: a.owner === PLAYER ? '#1f6feb' : colorOf(a.owner) },
+    geometry: { type: 'LineString', coordinates: lineOf(pathAhead(a)) } }))));
 }
 
 let staticKey = '';
@@ -397,6 +442,7 @@ function select({ towns = [], army: picked_ = null, road = null }) {
   picked = new Set();
   drawStatic();
   drawBadges();
+  drawPaths();
   drawRoute();
   renderUi(true);
 }
@@ -821,7 +867,7 @@ function cmdHtml() {
   const units = pickedUnits(id), going = total(units), all = total(s.garrison);
   let html = who(esc(t.name), `${TIERS[t.tier]}${live.me.capital === id ? ' · capital' : ''}`, PLAYER,
     chip(UI.coin, `+${Math.round(s.income)}`, `Earns ${Math.round(s.income)} a minute${s.supplied ? '' : ' — halved, cut off from your capital'}`, s.supplied ? '#8a6d1c' : '#d97706')
-    + chip(UI.shield, defencePower(s.garrison, s.defence).toFixed(1), `Defence strength (garrison × ${s.defence.toFixed(2)})`, '#5b6672') + traits);
+    + chip(UI.shield, s.strength.toFixed(1), `Defence strength: garrison and camped armies × ${s.defence.toFixed(2)}`, '#5b6672') + traits);
   const here = armiesAt(id).filter((a) => a.owner === PLAYER);
   const banners = here.length ? `<div class="banners">${here.map((a) => `<button class="banner" data-army="${a.id}" title="Select ${esc(a.name)}">${UI.flag}<b>${esc(a.name)}</b> ${a.infantry + a.vehicle}</button>`).join('')}</div>` : '';
   html += `<div class="mid">${banners}<div class="pick"><span>${all ? `<b>${going}</b> of ${all} in the garrison selected` : 'Garrison'}</span>
@@ -1076,6 +1122,7 @@ function onTick(data) {
   drawBadges();
   drawEvents();
   drawAlerts();
+  drawPaths();
   drawMini();
   renderUi();
 }
@@ -1083,6 +1130,7 @@ function onTick(data) {
 function onGraph(full) {
   game = full;
   land = full.territory;
+  seen = full.sight ?? seen;
   onTick(full.live);
   if (map?.getSource('world')) {
     map.getSource('world').setTiles([worldUrl('tiles', 'mvt')]);
@@ -1091,6 +1139,7 @@ function onGraph(full) {
     map.getSource('mask').setData(mask());
     drawStatic(true);
     drawLand();
+    drawFog();
   }
 }
 
@@ -1098,6 +1147,7 @@ function play(full) {
   game = full;
   live = full.live;
   land = full.territory;
+  seen = full.sight ?? [];
   tickAt = performance.now();
   selTowns = []; selArmy = null; selRoad = null; mode = null; lastEvent = 0; lastPlace = null;
   $('events').innerHTML = '';
@@ -1114,6 +1164,7 @@ function play(full) {
   stream.addEventListener('tick', (e) => onTick(JSON.parse(e.data)));
   stream.addEventListener('graph', (e) => onGraph(JSON.parse(e.data)));
   stream.addEventListener('territory', (e) => { land = JSON.parse(e.data); drawLand(); drawMini(); });
+  stream.addEventListener('sight', (e) => { seen = JSON.parse(e.data); drawFog(); });
 }
 
 async function refreshList(selectId) {

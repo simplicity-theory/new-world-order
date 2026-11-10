@@ -67,3 +67,30 @@ export function territory(graph: Graph, owners: Record<string, number>, b: Exten
   }
   return out;
 }
+
+/**
+ * The area a side can currently see, as rings, for drawing fog over the rest. `eyes` are
+ * [x, y, range] circles. The outermost cells count as unseen so no ring touches the edge
+ * of the map, which keeps the fog a clean polygon with holes.
+ */
+export function sight(eyes: [number, number, number][], b: Extent): Pt[][] {
+  const n = Math.ceil(Math.max(b.maxx - b.minx, b.maxy - b.miny) / CELL) + 1;
+  const f = new Float32Array(n * n).fill(-1);
+  for (const [ex, ey, r] of eyes) {
+    const i0 = Math.max(1, Math.floor((ex - r - b.minx) / CELL)), i1 = Math.min(n - 2, Math.ceil((ex + r - b.minx) / CELL));
+    const j0 = Math.max(1, Math.floor((ey - r - b.miny) / CELL)), j1 = Math.min(n - 2, Math.ceil((ey + r - b.miny) / CELL));
+    for (let j = j0; j <= j1; j++) {
+      const py = b.miny + j * CELL;
+      if (py >= b.maxy) continue;
+      for (let i = i0; i <= i1; i++) {
+        const px = b.minx + i * CELL;
+        if (px >= b.maxx) continue;
+        const v = 1 - Math.hypot(px - ex, py - ey) / r;
+        if (v > f[j * n + i]) f[j * n + i] = v;
+      }
+    }
+  }
+  // Only the outer edge of each seen patch is kept; pockets of fog inside one are too small to matter.
+  return contourPolygons(f, n, b.minx, b.miny, CELL)
+    .map((rings) => chaikin([...rings[0], rings[0][0]], 1).slice(0, -1).map(([x, y]) => [Math.round(x), Math.round(y)] as Pt));
+}

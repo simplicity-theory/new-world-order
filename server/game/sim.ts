@@ -271,26 +271,26 @@ export class Sim {
     return pointAlong(road.pts, leg.rev ? road.length - a.dist : a.dist);
   }
 
+  /** Everything a faction sees from, as [x, y, range]: the towns it holds and its armies. */
+  eyes(who: number): [number, number, number][] {
+    const eyes: [number, number, number][] = [];
+    for (const t of this.state.graph.towns) if (this.state.towns[t.id].owner === who) eyes.push([t.x, t.y, RULES.vision.town + t.r]);
+    for (const a of this.state.armies) if (a.owner === who) eyes.push([...this.position(a), RULES.vision.group]);
+    return eyes;
+  }
+
   /** Towns a faction can see right now: near a town it holds or an army of its own. */
   visible(who: number): Set<string> {
-    const eyes: [number, number, number][] = [];
-    for (const t of this.state.graph.towns) if (this.state.towns[t.id].owner === who) eyes.push([t.x, t.y, RULES.vision.town]);
-    for (const a of this.state.armies) if (a.owner === who) eyes.push([...this.position(a), RULES.vision.group]);
+    const eyes = this.eyes(who);
     const out = new Set<string>();
     for (const t of this.state.graph.towns) {
-      if (eyes.some(([x, y, r]) => Math.hypot(t.x - x, t.y - y) <= r + t.r)) out.add(t.id);
+      if (eyes.some(([x, y, r]) => Math.hypot(t.x - x, t.y - y) <= r)) out.add(t.id);
     }
     return out;
   }
 
   canSee(who: number, p: Pt): boolean {
-    for (const t of this.state.graph.towns) if (this.state.towns[t.id].owner === who && Math.hypot(t.x - p[0], t.y - p[1]) <= RULES.vision.town) return true;
-    for (const a of this.state.armies) {
-      if (a.owner !== who) continue;
-      const q = this.position(a);
-      if (Math.hypot(q[0] - p[0], q[1] - p[1]) <= RULES.vision.group) return true;
-    }
-    return false;
+    return this.eyes(who).some(([x, y, r]) => Math.hypot(x - p[0], y - p[1]) <= r);
   }
 
   // ----- Routes -----
