@@ -244,6 +244,20 @@ test('winning fights earns an army stars, which make it stronger', () => {
   assert.equal(s.armies[1].stars, 2);
 });
 
+test('an army follows queued waypoints, taking towns as it goes', () => {
+  const { sim, s } = game();
+  s.towns.c.garrison.infantry = 40;
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 40 });
+  const army = s.armies[0];
+  assert.deepEqual(sim.command({ type: 'redirect', army: army.id, to: 'e', queue: true }), { ok: true });
+  assert.deepEqual(army.orders, ['e']);
+  run(sim, 120);
+  assert.equal(s.towns.d.owner, PLAYER);
+  assert.equal(s.towns.e.owner, PLAYER);
+  assert.equal(army.at, 'e');
+  assert.deepEqual(army.orders, []);
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

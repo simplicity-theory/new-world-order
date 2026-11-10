@@ -24,6 +24,8 @@ let selArmy = null;     // selected army id
 let selRoad = null;     // selected road id
 let mode = null;        // what the next click on a town means: 'send', 'rally' or 'redirect'
 let drag = null;        // an order being dragged from a town or army
+let showRoads = false;  // the road-network overlay
+let threeD = false;
 let fcMarker = null;    // the forecast shown at the target
 const cycle = {};       // alert kind → which of its places was shown last
 let hovered = null;
@@ -179,7 +181,7 @@ const ring = (pts) => { const c = pts.map(([x, y]) => toLngLat(x, y)); c.push(c[
 const lineOf = (pts) => pts.map(([x, y]) => toLngLat(x, y));
 
 function addOverlay() {
-  const sources = ['cq-land', 'cq-fog', 'cq-paths', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
+  const sources = ['cq-land', 'cq-fog', 'cq-paths', 'cq-bridges', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
   for (const id of sources) map.addSource(id, { type: 'geojson', data: empty });
   // The game draws its own town names, so the map's are hidden.
   if (map.getLayer('place')) map.setLayoutProperty('place', 'visibility', 'none');
@@ -199,6 +201,12 @@ function addOverlay() {
   map.addLayer({ id: 'cq-area-edge', type: 'line', source: 'cq-areas',
     paint: { 'line-color': ['case', ['==', ['get', 'selected'], 1], '#f5b301', ['get', 'color']], 'line-width': ['case', ['==', ['get', 'selected'], 1], 4, 2.2],
       'line-opacity': ['case', ['==', ['get', 'known'], 1], 0.95, 0.5] } });
+  // The whole road network, coloured by class, for when the player asks to see it.
+  map.addLayer({ id: 'cq-road-all', type: 'line', source: 'cq-roads', layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': ['match', ['get', 'kind'], 'motorway', '#c0392b', 'primary', '#e67e22', 'secondary', '#d4ac0d', '#6b7785'],
+      'line-width': ['match', ['get', 'kind'], 'motorway', 5, 'primary', 4, 'secondary', 3, 2.2], 'line-opacity': 0.85 } });
+  map.addLayer({ id: 'cq-bridges', type: 'circle', source: 'cq-bridges', layout: { visibility: 'none' },
+    paint: { 'circle-radius': 4.5, 'circle-color': '#ffffff', 'circle-stroke-color': '#1f2933', 'circle-stroke-width': 2 } });
   // Roads are drawn only when cut, being mended or selected, but can always be clicked.
   map.addLayer({ id: 'cq-road-hit', type: 'line', source: 'cq-roads', paint: { 'line-color': '#000000', 'line-opacity': 0.001, 'line-width': 14 } });
   map.addLayer({ id: 'cq-road-state', type: 'line', source: 'cq-roads', filter: ['!=', ['get', 'state'], 'ok'],
@@ -261,6 +269,13 @@ function pathAhead(a) {
       d -= l;
     }
   });
+  // Then on through any waypoints queued after that.
+  let from = a.to;
+  for (const to of a.owner === PLAYER ? a.orders ?? [] : []) {
+    const r = from !== to ? route(from, to, a) : null;
+    if (r) pts.push(...r.pts);
+    from = to;
+  }
   return pts;
 }
 
@@ -268,7 +283,7 @@ let pathsKey = '';
 function drawPaths() {
   if (!map?.getSource('cq-paths') || !live) return;
   const shown = live.armies.filter((a) => !a.at && a.path.length && (a.owner !== PLAYER || a.id === selArmy));
-  const key = JSON.stringify(shown.map((a) => [a.id, a.leg, Math.round(a.dist / 150), a.to]));
+  const key = JSON.stringify(shown.map((a) => [a.id, a.leg, Math.round(a.dist / 150), a.to, a.orders]));
   if (key === pathsKey) return;
   pathsKey = key;
   map.getSource('cq-paths').setData(collection(shown.map((a) => ({ type: 'Feature', properties: { color: a.owner === PLAYER ? '#1f6feb' : colorOf(a.owner) },
@@ -295,7 +310,7 @@ function drawStatic(force) {
   const roads = game.graph.roads.map((r) => {
     const c = cutState(r.id);
     return { type: 'Feature', geometry: { type: 'LineString', coordinates: lineOf(r.pts) },
-      properties: { id: r.id, state: c ? (c.repair >= 0 ? 'repair' : 'cut') : r.id === selRoad ? 'selected' : 'ok' } };
+      properties: { id: r.id, kind: r.kind, state: c ? (c.repair >= 0 ? 'repair' : 'cut') : r.id === selRoad ? 'selected' : 'ok' } };
   });
   const cuts = live.roads.filter((c) => c.cutAt).map((c) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: toLngLat(c.cutAt[0], c.cutAt[1]) } }));
   const key = JSON.stringify([areas.map((f) => f.properties), labels.map((f) => f.properties), sites.map((f) => f.properties), roads.map((f) => f.properties.state), cuts.length]);
@@ -306,7 +321,24 @@ function drawStatic(force) {
   map.getSource('cq-sites').setData(collection(sites));
   map.getSource('cq-roads').setData(collection(roads));
   map.getSource('cq-cuts').setData(collection(cuts));
+  map.getSource('cq-bridges').setData(collection(game.graph.roads.flatMap((r) => r.bridges.map((b) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: toLngLat(b.x, b.y) } })))));
+  applyView();
 }
+
+/** Apply the road overlay and 3D toggles to the map. */
+function applyView() {
+  if (!map?.getLayer('cq-road-all')) return;
+  for (const id of ['cq-road-all', 'cq-bridges']) map.setLayoutProperty(id, 'visibility', showRoads ? 'visible' : 'none');
+  $('toggle-roads').classList.toggle('on', showRoads);
+  $('toggle-3d').classList.toggle('on', threeD);
+  if (map.getLayer('building-3d')) {
+    map.setTerrain(threeD ? { source: 'terrain', exaggeration: 1.5 } : null);
+    map.setLayoutProperty('building-3d', 'visibility', threeD ? 'visible' : 'none');
+    map.setLayoutProperty('building', 'visibility', threeD ? 'none' : 'visible');
+  }
+}
+$('toggle-roads').addEventListener('click', () => { showRoads = !showRoads; applyView(); });
+$('toggle-3d').addEventListener('click', () => { threeD = !threeD; applyView(); map.easeTo({ pitch: threeD ? 55 : 0, bearing: threeD ? map.getBearing() : 0, duration: 700 }); });
 
 // ----- Town badges -----
 
@@ -362,7 +394,7 @@ function drawBadges() {
         e.stopPropagation(); // or the map would start panning underneath
         startDrag({ town: t.id }, e);
       });
-      el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); if (canOrder() && !(selTowns.length === 1 && selTowns[0] === t.id)) order(t.id); });
+      el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); if (canOrder() && !(selTowns.length === 1 && selTowns[0] === t.id)) order(t.id, e.shiftKey); });
       el.addEventListener('mouseenter', () => hover(t.id));
       el.addEventListener('mouseleave', () => hover(null));
       b = { el, key: '', marker: new maplibregl.Marker({ element: holder, anchor: 'top', offset: [0, 3] }).setLngLat(toLngLat(t.x, t.y)).addTo(map) };
@@ -454,7 +486,11 @@ function select({ towns = [], army: picked_ = null, road = null }) {
 }
 
 /** Act on a town with whatever is selected: send units, redirect a group or set a rally point. */
-function order(to) {
+function order(to, queue = false) {
+  if (queue && selArmy !== null && army(selArmy) && (!army(selArmy).at || army(selArmy).siege)) {
+    command({ type: 'redirect', army: selArmy, to, queue: true });
+    return toast(`${army(selArmy).name} will go on to ${town(to).name} afterwards`);
+  }
   if (mode === 'rally' && selTowns.length === 1) {
     command({ type: 'rally', town: selTowns[0], to });
   } else if (selArmy !== null) {
@@ -547,7 +583,7 @@ function startMap() {
   });
   map.on('contextmenu', (e) => {
     const id = hit(e.point, 'cq-area');
-    if (id && canOrder() && !(selTowns.length === 1 && selTowns[0] === id)) order(id);
+    if (id && canOrder() && !(selTowns.length === 1 && selTowns[0] === id)) order(id, e.originalEvent.shiftKey);
   });
   map.on('mousemove', (e) => {
     const id = hit(e.point, 'cq-area');
@@ -1181,6 +1217,8 @@ document.addEventListener('keydown', (e) => {
     if (lastPlace) goTo(lastPlace[0], lastPlace[1]); else toast('Nothing has happened yet');
   } else if ((k === 'o' || k === 'O') && !$('cmd').querySelector('[data-key="o"]')) {
     openSheet(sheetTab ? null : 'economy');
+  } else if (k === 'l' || k === 'L') {
+    $('toggle-roads').click();
   } else if (k === '?') {
     $('keys').click();
   } else {

@@ -42,6 +42,7 @@ export interface Army extends Units {
   retreating: boolean;      // beaten and falling back; takes no orders until it gets home
   settle: boolean;          // joins the garrison on arrival (recruits heading for a rally point)
   stars: number;            // fights won, up to the limit; each makes the army stronger
+  orders?: string[];        // towns to go on to, in turn, after the one it is heading for
 }
 export interface Faction {
   id: number; name: string; color: string; money: number;
@@ -385,6 +386,15 @@ export class Sim {
     return army;
   }
 
+  /** An army that has come to rest sets off for the next town it was told to go on to, if any. */
+  private carryOn(a: Army): void {
+    while (a.orders?.length && a.at && !a.siege && !a.retreating && this.state.armies.includes(a)) {
+      const to = a.orders.shift()!;
+      const r = to !== a.at ? this.route(a.at, to, a) : null;
+      if (r?.legs.length) { const rest = a.orders; this.march(a, r.legs, to); a.orders = rest; return; }
+    }
+  }
+
   private disband(a: Army): void {
     const i = this.state.armies.indexOf(a);
     if (i >= 0) this.state.armies.splice(i, 1);
@@ -394,6 +404,7 @@ export class Sim {
     a.from = a.at ?? a.from;
     a.at = null;
     a.siege = null;
+    a.orders = [];
     a.path = legs;
     a.leg = 0;
     a.dist = 0;
@@ -460,6 +471,7 @@ export class Sim {
     for (const b of Object.values(town.buildings)) { b.queue = 0; b.training = 0; b.repeat = false; if (!b.done) b.progress = 0; }
     Object.assign(army, survivors, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id });
     this.earn(army);
+    const onward = army.orders;
     for (const other of this.besiegersOf(id)) if (other.owner === army.owner) other.siege = null;
     const escaped = this.retreatFrom(fled, before, id);
     const defLeft = escaped ? fled : none();
@@ -479,6 +491,8 @@ export class Sim {
       if (s.winner === null && (loser.id === PLAYER || left.length === 1)) s.winner = army.owner;
     }
     this.onCapture?.(node, army.owner);
+    army.orders = onward;
+    this.carryOn(army);
   }
 
   /** An army reaches a town at the end of a leg. Returns false if it can go no further. */
@@ -528,6 +542,7 @@ export class Sim {
     if (!last) return true;
     if (army.settle) { town.garrison = add(town.garrison, army); this.disband(army); return false; }
     Object.assign(army, { at: id, path: [], leg: 0, dist: 0, to: id, retreating: false });
+    this.carryOn(army);
     return false;
   }
 
@@ -816,6 +831,12 @@ export class Sim {
         if (army.retreating) return fail('that army is retreating and takes no orders');
         const to = c.to === undefined ? army.from : String(c.to);
         if (!s.towns[to]) return fail('pick a town');
+        if (c.queue && (!army.at || army.siege)) {
+          // Add a town to go on to afterwards, instead of changing where it is heading now.
+          if ((army.orders ??= []).length >= 8) return fail('that is enough waypoints');
+          army.orders.push(to);
+          return { ok: true };
+        }
         if (army.at) {
           if (to === army.at) return fail('it is already there');
           const r = this.route(army.at, to, army);
