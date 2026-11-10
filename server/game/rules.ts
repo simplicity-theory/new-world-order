@@ -29,8 +29,10 @@ export const RULES = {
   neutralGarrison: [{ infantry: 1, vehicle: 0 }, { infantry: 3, vehicle: 0 }, { infantry: 9, vehicle: 1 }, { infantry: 20, vehicle: 5 }],
   /** Each of these adds this much to a town's defence: a hill site, a river, each level of fortification. */
   defenceBonus: { hill: 0.25, river: 0.25, fort: 0.25 },
-  /** Losses of the winning side are (loser strength / winner strength) to this power. */
-  lossPower: 1.5,
+  /** The winner loses this share of its units: lossScale × (loser strength / winner strength) ^ lossPower. */
+  lossPower: 2, lossScale: 0.75,
+  /** An army earns a star for each fight it wins, up to this many; each star adds this much to its strength. */
+  experience: { max: 3, perStar: 0.1 },
   /** The losing side keeps this share of its units and retreats: base, plus more the closer the fight was. */
   retreat: { base: 0.25, close: 0.25 },
   /**

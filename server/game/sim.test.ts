@@ -93,9 +93,9 @@ test('repeat training keeps queueing while there is money', () => {
 test('fights: the stronger side wins, loses more the closer it was, and the loser keeps a share', () => {
   const easy = fight(20, 3);
   assert.equal(easy.win, true);
-  assert.equal(share({ infantry: 20, vehicle: 0 }, 1 - easy.loss, true).infantry, 19);
+  assert.equal(share({ infantry: 20, vehicle: 0 }, 1 - easy.loss, true).infantry, 20);
   const close = fight(10, 9);
-  assert.ok(close.win && close.loss > 0.8);
+  assert.ok(close.win && close.loss > 0.5 && close.loss < 0.75);
   assert.ok(close.keep > easy.keep);
   assert.equal(fight(4, 7.5).win, false);
   assert.equal(fight(5, 5).win, false); // a tie goes to the defender
@@ -115,7 +115,7 @@ test('an army that takes a town camps there as an army', () => {
   assert.equal(s.armies.length, 1);
   assert.equal(s.armies[0].at, 'd');
   assert.ok(s.armies[0].infantry >= 4 && s.armies[0].infantry < 10);
-  assert.equal(sim.strengthOf('d'), defencePower(s.armies[0], 1)); // it defends the town it is camped in
+  assert.equal(sim.strengthOf('d'), defencePower(s.armies[0], 1) * 1.1); // it defends the town it is camped in, with a star for the win
 });
 
 test('a beaten attacker retreats home with part of its force', () => {
@@ -224,6 +224,22 @@ test('armies can be formed, split, merged and stood down', () => {
   sim.command({ type: 'garrison', army: first.id });
   assert.equal(s.armies.length, 0);
   assert.equal(s.towns.c.garrison.infantry, 10);
+});
+
+test('winning fights earns an army stars, which make it stronger', () => {
+  const { sim, s } = game();
+  s.towns.c.garrison.infantry = 20;
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 20 });
+  run(sim, 60);
+  const army = s.armies[0];
+  assert.equal(army.stars, 1);
+  assert.equal(sim.strengthOf('d'), army.infantry * RULES.units.infantry.defence * 1.1);
+  sim.command({ type: 'redirect', army: army.id, to: 'e' });
+  run(sim, 60);
+  assert.equal(s.towns.e.owner, PLAYER);
+  assert.equal(army.stars, 2);
+  sim.command({ type: 'split', army: army.id, infantry: 2 });
+  assert.equal(s.armies[1].stars, 2);
 });
 
 test('a camped army can be ordered to march', () => {

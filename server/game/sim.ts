@@ -41,6 +41,7 @@ export interface Army extends Units {
   siege: { progress: number; need: number } | null;   // besieging the town it is at
   retreating: boolean;      // beaten and falling back; takes no orders until it gets home
   settle: boolean;          // joins the garrison on arrival (recruits heading for a rally point)
+  stars: number;            // fights won, up to the limit; each makes the army stronger
 }
 export interface Faction {
   id: number; name: string; color: string; money: number;
@@ -110,8 +111,11 @@ export const defencePower = (u: Units, multiplier: number): number =>
 export function fight(ap: number, dp: number): { win: boolean; loss: number; keep: number } {
   const win = ap > dp;
   const ratio = win ? (ap > 0 ? dp / ap : 0) : (dp > 0 ? ap / dp : 0);
-  return { win, loss: ratio ** RULES.lossPower, keep: RULES.retreat.base + RULES.retreat.close * ratio };
+  return { win, loss: RULES.lossScale * ratio ** RULES.lossPower, keep: RULES.retreat.base + RULES.retreat.close * ratio };
 }
+/** How much an army's experience multiplies its strength. */
+export const veteran = (a: { stars?: number }): number => 1 + (a.stars ?? 0) * RULES.experience.perStar;
+
 /** A share of some units, rounded. A winner always keeps at least one. */
 export function share(u: Units, keep: number, atLeastOne = false): Units {
   const out = { infantry: Math.round(u.infantry * keep), vehicle: Math.round(u.vehicle * keep) };
@@ -241,8 +245,13 @@ export class Sim {
   forceAt(id: string): Units {
     return this.defendersAt(id).reduce((u, a) => add(u, a), only(this.state.towns[id].garrison));
   }
+  /** Defence strength of a town: its garrison plus each camped army, which counts for more if it is experienced. */
   strengthOf(id: string, breached = false): number {
-    return defencePower(this.forceAt(id), this.defenceOf(id, breached));
+    const mult = this.defenceOf(id, breached);
+    return this.defendersAt(id).reduce((n, a) => n + defencePower(a, mult) * veteran(a), defencePower(this.state.towns[id].garrison, mult));
+  }
+  private earn(a: Army): void {
+    a.stars = Math.min(RULES.experience.max, (a.stars ?? 0) + 1);
   }
 
   /** Money a town earns per minute for whoever holds it. A besieged town earns nothing. */
@@ -356,7 +365,7 @@ export class Sim {
     const f = this.faction(owner);
     const name = extra.name ?? `${owner === PLAYER ? '' : `${f.name} `}${ordinal(++f.raised)} Army`;
     const army: Army = { id: this.state.nextId++, owner, ...only(units), at, from: at ?? '', to: at ?? '', path: [], leg: 0, dist: 0, speed: 0,
-      siege: null, retreating: false, settle: false, ...extra, name };
+      siege: null, retreating: false, settle: false, stars: 0, ...extra, name };
     this.state.armies.push(army);
     return army;
   }
@@ -401,7 +410,7 @@ export class Sim {
     const s = this.state, town = s.towns[id], node = this.nodes.get(id)!;
     const camped = this.defendersAt(id);
     const attackers = only(army), defenders = this.forceAt(id);
-    const ap = attackPower(army), dp = defencePower(defenders, this.defenceOf(id, breached));
+    const ap = attackPower(army) * veteran(army), dp = this.strengthOf(id, breached);
     const r = fight(ap, dp);
     const before = town.owner, at: Pt = [node.x, node.y];
     const report = (mine: 'att' | 'def', attLeft: Units, defLeft: Units): Report => (mine === 'att'
@@ -413,7 +422,7 @@ export class Sim {
       const kept = 1 - r.loss;
       town.garrison = share(town.garrison, kept);
       for (const a of camped) Object.assign(a, share(a, kept));
-      for (const a of camped) if (!count(a)) this.disband(a);
+      for (const a of camped) { if (!count(a)) this.disband(a); else this.earn(a); }
       const defLeft = this.forceAt(id);
       if (count(defenders) && !count(defLeft)) town.garrison.infantry = 1;
       const away = army.retreating ? none() : share(army, r.keep);
@@ -434,6 +443,7 @@ export class Sim {
     town.rally = null;
     for (const b of Object.values(town.buildings)) { b.queue = 0; b.training = 0; b.repeat = false; if (!b.done) b.progress = 0; }
     Object.assign(army, survivors, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id });
+    this.earn(army);
     for (const other of this.besiegersOf(id)) if (other.owner === army.owner) other.siege = null;
     const escaped = this.retreatFrom(fled, before, id);
     const defLeft = escaped ? fled : none();
@@ -470,10 +480,11 @@ export class Sim {
     const besiegers = this.besiegersOf(id);
     if (besiegers.length) {
       const enemy = besiegers.reduce((u, b) => add(u, b), none());
-      const ap = attackPower(army) + RULES.sortie * attackPower(town.garrison), bp = attackPower(enemy);
+      const ap = attackPower(army) * veteran(army) + RULES.sortie * attackPower(town.garrison), bp = besiegers.reduce((n, b) => n + attackPower(b) * veteran(b), 0);
       const r = fight(ap, bp), mine = only(army);
       if (r.win) {
         Object.assign(army, share(army, 1 - r.loss, true));
+        this.earn(army);
         let fled = 0;
         for (const b of besiegers) { this.disband(b); fled += this.retreatFrom(share(b, r.keep), b.owner, id, b.name); }
         this.note(`${army.name} broke the siege of ${node.name}.`, army.owner, { at, kind: 'battle',
@@ -482,7 +493,7 @@ export class Sim {
           report: { kind: 'field', place: `outside ${node.name}`, won: false, you: { before: enemy, after: share(enemy, fled ? r.keep : 0), power: bp }, them: { owner: army.owner, before: mine, after: only(army), power: ap } } });
       } else {
         // Beaten outside the walls: what is left of the relief force gets inside.
-        for (const b of besiegers) Object.assign(b, share(b, 1 - r.loss, true));
+        for (const b of besiegers) { Object.assign(b, share(b, 1 - r.loss, true)); this.earn(b); }
         const inside = share(army, r.keep);
         town.garrison = add(town.garrison, inside);
         this.disband(army);
@@ -500,13 +511,14 @@ export class Sim {
 
   /** Two hostile armies meet on a road and fight. The loser falls back the way it came, if that leads home. */
   private meet(a: Army, b: Army): void {
-    const pa = attackPower(a), pb = attackPower(b), ua = only(a), ub = only(b);
+    const pa = attackPower(a) * veteran(a), pb = attackPower(b) * veteran(b), ua = only(a), ub = only(b);
     const r = fight(pa, pb);
     const [winner, loser] = r.win ? [a, b] : [b, a];
     const road = this.roads.get(a.path[a.leg].road)!;
     const place = `between ${this.nodes.get(road.a)!.name} and ${this.nodes.get(road.b)!.name}`;
     const at = this.position(a);
     Object.assign(winner, share(winner, 1 - r.loss, true));
+    this.earn(winner);
     // The loser turns for whichever end of this road its own side holds; with neither, it is destroyed.
     const kept = loser.retreating ? none() : share(loser, r.keep);
     const leg = loser.path[loser.leg], lr = this.roads.get(leg.road)!;
@@ -794,6 +806,9 @@ export class Sim {
         if (!myArmy || !army.at || army.retreating) return fail('that army cannot merge now');
         const others = s.armies.filter((a) => a !== army && a.owner === who && a.at === army.at && !a.retreating && !!a.siege === !!army.siege);
         if (!others.length) return fail('no other army of yours is here');
+        // The merged army's experience is the average of its parts, weighted by size.
+        const all = [army, ...others], men = all.reduce((n, a) => n + count(a), 0);
+        army.stars = Math.floor(all.reduce((n, a) => n + (a.stars ?? 0) * count(a), 0) / men);
         for (const o of others) { Object.assign(army, add(army, o)); this.disband(o); }
         return { ok: true };
       }
@@ -803,7 +818,7 @@ export class Sim {
         if (!count(units) || count(units) >= count(army)) return fail('pick some of its units, not all or none');
         army.infantry -= units.infantry;
         army.vehicle -= units.vehicle;
-        this.raise(who, units, army.at);
+        this.raise(who, units, army.at, { stars: army.stars ?? 0 });
         return { ok: true };
       }
       case 'garrison': {

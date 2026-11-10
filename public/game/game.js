@@ -80,6 +80,7 @@ const clockText = (c) => `${Math.floor(c / 60)}:${String(Math.floor(c) % 60).pad
 
 // The same arithmetic as the server, for previews.
 const attackPower = (u) => game.unitKinds.reduce((n, k) => n + (u[k] || 0) * game.rules.units[k].attack, 0);
+const veteran = (a) => 1 + (a.stars || 0) * game.rules.experience.perStar;
 const defencePower = (u, mult) => game.unitKinds.reduce((n, k) => n + (u[k] || 0) * game.rules.units[k].defence, 0) * mult;
 function speedOn(u, kind) {
   const k = kind in game.rules.speed.vehicle ? kind : 'tertiary';
@@ -140,9 +141,9 @@ function forecast(from, to, units) {
   if (stop !== to) out.text += ` — they will stop at ${town(stop).name}`;
   out.fight = { siege: s.siege, known: s.visible };
   if (s.visible) {
-    const ap = attackPower(units), dp = s.siege ? s.breached : s.strength;
+    const ap = attackPower(units) * veteran(units), dp = s.siege ? s.breached : s.strength;
     const win = ap > dp, ratio = win ? (ap ? dp / ap : 0) : (dp ? ap / dp : 0);
-    Object.assign(out.fight, { ap, dp, win, lose: win ? Math.round(total(units) * ratio ** game.rules.lossPower) : total(units) - Math.round(total(units) * (game.rules.retreat.base + game.rules.retreat.close * ratio)) });
+    Object.assign(out.fight, { ap, dp, win, lose: win ? Math.round(total(units) * game.rules.lossScale * ratio ** game.rules.lossPower) : total(units) - Math.round(total(units) * (game.rules.retreat.base + game.rules.retreat.close * ratio)) });
   }
   return out;
 }
@@ -221,6 +222,11 @@ function addOverlay() {
   map.addLayer({ id: 'cq-groups', type: 'circle', source: 'cq-groups',
     paint: { 'circle-radius': 10, 'circle-color': ['get', 'color'], 'circle-opacity': ['match', ['get', 'mood'], 'retreat', 0.55, 1],
       'circle-stroke-color': ['match', ['get', 'mood'], 'siege', '#f5b301', 'retreat', '#9aa1a9', '#ffffff'], 'circle-stroke-width': ['match', ['get', 'mood'], 'siege', 3.5, 2] } });
+  map.addLayer({ id: 'cq-group-stars', type: 'symbol', source: 'cq-groups', filter: ['!=', ['get', 'stars'], ''],
+    layout: { ...text, 'text-field': ['get', 'stars'], 'text-size': 9, 'text-offset': [0, -1.75] }, paint: { 'text-color': '#b7791f', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 } });
+  map.addLayer({ id: 'cq-group-name', type: 'symbol', source: 'cq-groups', minzoom: 12.6, filter: ['!=', ['get', 'name'], ''],
+    layout: { 'text-font': ['sans-serif'], 'text-field': ['get', 'name'], 'text-size': 10.5, 'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-optional': true },
+    paint: { 'text-color': '#12305c', 'text-halo-color': '#ffffffe6', 'text-halo-width': 1.6 } });
   map.addLayer({ id: 'cq-group-label', type: 'symbol', source: 'cq-groups',
     layout: { ...text, 'text-field': ['get', 'label'], 'text-size': 10.5 }, paint: { 'text-color': '#ffffff' } });
   drawStatic(true);
@@ -395,7 +401,7 @@ function drawArmies() {
   map.getSource('cq-groups').setData(collection(live.armies.map((a) => {
     const [x, y] = armyPoint(a, ahead);
     return { type: 'Feature', geometry: { type: 'Point', coordinates: toLngLat(x, y) },
-      properties: { id: a.id, color: colorOf(a.owner), label: String(a.infantry + a.vehicle), selected: a.id === selArmy ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
+      properties: { id: a.id, color: colorOf(a.owner), label: String(a.infantry + a.vehicle), stars: '★'.repeat(a.stars || 0), name: a.owner === PLAYER ? a.name : '', selected: a.id === selArmy ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
   })));
 }
 function frame() { drawArmies(); requestAnimationFrame(frame); }
@@ -883,7 +889,8 @@ function cmdHtml() {
     if (!a) return '';
     const own = myArmy(a), free = camped(a), n = a.infantry + a.vehicle;
     const where = a.siege ? `besieging ${town(a.at).name}` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`;
-    const chips = chip(UI.shield, attackPower(a).toFixed(0), 'Attack strength')
+    const chips = chip(UI.shield, (attackPower(a) * veteran(a)).toFixed(1), `Attack strength${a.stars ? `, including +${a.stars * 10}% for experience` : ''}`)
+      + (a.stars ? chip('', '★'.repeat(a.stars), `${a.stars} of ${rules.experience.max} stars: one for each fight won, each adding ${rules.experience.perStar * 100}% strength`, '#b7791f') : '')
       + (a.siege ? chip(UI.fort, `${Math.round(100 * a.siege.progress / a.siege.need)}%`, `Siege: ${Math.round(a.siege.need - a.siege.progress)} s until the walls are breached`, '#d97706') : '');
     let html = who(esc(a.name), `${own ? '' : `${esc(faction(a.owner).name)} · `}${esc(where)}`, a.owner, chips);
     const going = free ? total(pickedOf(a)) : n;
