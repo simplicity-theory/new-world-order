@@ -6,6 +6,7 @@ import { buildStyle } from '/style.js';
 const $ = (id) => document.getElementById(id);
 const R = 6378137, DEG = 180 / Math.PI;
 const toLngLat = (x, y) => [(x / R) * DEG, (2 * Math.atan(Math.exp(y / R)) - Math.PI / 2) * DEG];
+const toMetres = (lng, lat) => [(lng / DEG) * R, R * Math.log(Math.tan(Math.PI / 4 + lat / DEG / 2))];
 const TIERS = ['Hamlet', 'Village', 'Town', 'City'];
 const PLAYER = 1, UNKNOWN = -1;
 const SPEEDS = [1, 2, 4, 8];
@@ -18,9 +19,12 @@ let land = [];          // territory polygons
 let tickAt = 0;
 let stream = null;
 let selTowns = [];      // selected town ids
-let selGroup = null;    // selected group id
+let selArmy = null;     // selected army id
 let selRoad = null;     // selected road id
 let mode = null;        // what the next click on a town means: 'send', 'rally' or 'redirect'
+let drag = null;        // an order being dragged from a town or army
+let fcMarker = null;    // the forecast shown at the target
+const cycle = {};       // alert kind → which of its places was shown last
 let hovered = null;
 let cmdKey = '', panelKey = '';
 let details = false;    // whether the roads-and-amounts panel is open
@@ -62,6 +66,11 @@ const faction = (id) => live.factions.find((f) => f.id === id);
 const colorOf = (owner) => faction(owner)?.color ?? '#a3a9b0';
 const ownerName = (owner) => (owner === PLAYER ? 'yours' : owner === UNKNOWN ? 'unexplored' : faction(owner).name.toLowerCase());
 const cutState = (id) => live.roads.find((r) => r.id === id);
+const army = (id) => live.armies.find((a) => a.id === id);
+const myArmy = (a) => a && a.owner === PLAYER;
+/** An army of mine camped in a town of mine and free to take orders. */
+const camped = (a) => myArmy(a) && a.at && !a.siege && !a.retreating && mine(a.at);
+const armiesAt = (id) => live.armies.filter((a) => a.at === id);
 const total = (u) => game.unitKinds.reduce((n, k) => n + (u?.[k] || 0), 0);
 const unitText = (u) => game.unitKinds.filter((k) => u[k]).map((k) => `${u[k]} ${game.rules.units[k].name.toLowerCase()}`).join(', ') || 'none';
 /** The units an order from this town would move: the cards picked, or everyone when several towns are selected. */
@@ -115,23 +124,42 @@ function pointAlong(pts, d) {
   return pts[pts.length - 1];
 }
 
-/** What happens if these units set off for a town: where they stop and how the fight there should go. */
+/**
+ * What happens if these units set off for a town: the route, where they stop, and how
+ * the fight there should go. A walled town is besieged first, which takes its walls out
+ * of the reckoning.
+ */
 function forecast(from, to, units) {
   const r = route(from, to, units);
   if (!r) return { text: `No road leads to ${town(to).name}` };
   const stop = r.stops.find((id) => !mine(id)) ?? to;
-  let text = `${town(to).name}: ${(r.length / 1000).toFixed(1)} km, about ${Math.round(r.time)} s`;
-  if (!mine(stop)) {
-    const s = state(stop);
-    if (stop !== to) text += ` — they will stop to fight at ${town(stop).name}`;
-    if (!s.visible) text += ' — defenders unknown';
-    else {
-      const ap = attackPower(units), dp = defencePower(s.garrison, s.defence);
-      const share = ap > dp ? (dp / ap) ** game.rules.lossPower : 1;
-      text += ` — attack ${ap.toFixed(0)} against defence ${dp.toFixed(1)}: ${ap > dp ? `you should win, losing about ${Math.round(total(units) * share)}` : 'you would lose'}`;
-    }
+  const out = { pts: r.pts, stop, time: r.time, text: `${town(to).name}: ${(r.length / 1000).toFixed(1)} km, about ${Math.round(r.time)} s` };
+  if (mine(stop)) return out;
+  const s = state(stop);
+  if (stop !== to) out.text += ` — they will stop at ${town(stop).name}`;
+  out.fight = { siege: s.siege, known: s.visible };
+  if (s.visible) {
+    const ap = attackPower(units), dp = s.siege ? s.breached : s.strength;
+    const win = ap > dp, ratio = win ? (ap ? dp / ap : 0) : (dp ? ap / dp : 0);
+    Object.assign(out.fight, { ap, dp, win, lose: win ? Math.round(total(units) * ratio ** game.rules.lossPower) : total(units) - Math.round(total(units) * (game.rules.retreat.base + game.rules.retreat.close * ratio)) });
   }
-  return { text, pts: r.pts };
+  return out;
+}
+
+/** The forecast as a small card pinned above the target: a bar of your strength against theirs, and the upshot. */
+function showForecast(f) {
+  fcMarker?.remove();
+  fcMarker = null;
+  if (!f?.fight || !map) return;
+  const { fight } = f, t = town(f.stop), el = document.createElement('div');
+  const siege = fight.siege ? `<small>${Math.round(fight.siege)} s siege first</small>` : '';
+  if (!fight.known) el.innerHTML = `<div class="fc unknown"><b>Defenders unknown</b>${siege}</div>`;
+  else {
+    const mineShare = Math.round((100 * fight.ap) / ((fight.ap + fight.dp) || 1));
+    el.innerHTML = `<div class="fc ${fight.win ? 'win' : 'lose'}"><div class="bar"><i style="width:${mineShare}%"></i></div>
+      <span><em>${fight.ap.toFixed(0)}</em><b>${fight.win ? 'Win' : 'Lose'} · lose about ${fight.lose}</b><em>${fight.dp.toFixed(1)}</em></span>${siege}</div>`;
+  }
+  fcMarker = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -30] }).setLngLat(toLngLat(t.x, t.y)).addTo(map);
 }
 
 // ----- Map -----
@@ -149,7 +177,7 @@ const ring = (pts) => { const c = pts.map(([x, y]) => toLngLat(x, y)); c.push(c[
 const lineOf = (pts) => pts.map(([x, y]) => toLngLat(x, y));
 
 function addOverlay() {
-  const sources = ['cq-land', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-labels', 'cq-groups'];
+  const sources = ['cq-land', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
   for (const id of sources) map.addSource(id, { type: 'geojson', data: empty });
   // The game draws its own town names, so the map's are hidden.
   if (map.getLayer('place')) map.setLayoutProperty('place', 'visibility', 'none');
@@ -174,13 +202,16 @@ function addOverlay() {
     layout: { 'text-font': ['sans-serif'], 'text-field': ['get', 'label'], 'text-size': 11 }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#00000066', 'text-halo-width': 1 } });
   map.addLayer({ id: 'cq-route', type: 'line', source: 'cq-route', layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': '#1f6feb', 'line-width': 6, 'line-opacity': 0.5 } });
+  map.addLayer({ id: 'cq-drag', type: 'line', source: 'cq-drag', paint: { 'line-color': '#f5b301', 'line-width': 3, 'line-dasharray': [1.5, 1.5] } });
   map.addLayer({ id: 'cq-name', type: 'symbol', source: 'cq-labels',
     layout: { ...text, 'text-field': ['get', 'name'], 'text-size': ['+', 12.5, ['*', 2, ['get', 'tier']]], 'text-anchor': 'bottom', 'text-offset': [0, -0.1] },
     paint: { 'text-color': '#1c2530', 'text-halo-color': '#ffffffe6', 'text-halo-width': 1.8 } });
   map.addLayer({ id: 'cq-group-ring', type: 'circle', source: 'cq-groups', filter: ['==', ['get', 'selected'], 1],
     paint: { 'circle-radius': 14, 'circle-color': '#f5b301', 'circle-opacity': 0.9 } });
+  // Armies: a white rim normally, gold while besieging, grey and faded in retreat.
   map.addLayer({ id: 'cq-groups', type: 'circle', source: 'cq-groups',
-    paint: { 'circle-radius': 9, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+    paint: { 'circle-radius': 10, 'circle-color': ['get', 'color'], 'circle-opacity': ['match', ['get', 'mood'], 'retreat', 0.55, 1],
+      'circle-stroke-color': ['match', ['get', 'mood'], 'siege', '#f5b301', 'retreat', '#9aa1a9', '#ffffff'], 'circle-stroke-width': ['match', ['get', 'mood'], 'siege', 3.5, 2] } });
   map.addLayer({ id: 'cq-group-label', type: 'symbol', source: 'cq-groups',
     layout: { ...text, 'text-field': ['get', 'label'], 'text-size': 10.5 }, paint: { 'text-color': '#ffffff' } });
   drawStatic(true);
@@ -238,15 +269,16 @@ const ICON = {
   threat: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#d1345b"/><path d="M8 4v5M8 11v1.200" stroke="#fff" stroke-width="1.800" stroke-linecap="round"/></svg>',
 };
 
-/** Enemy groups known to be heading for a town. */
-const threatsTo = (id) => live.groups.filter((g) => g.to === id && g.owner !== state(id).owner && g.owner !== PLAYER && mine(id));
+/** Enemy armies known to be marching on a town of mine. */
+const threatsTo = (id) => (mine(id) ? live.armies.filter((a) => !a.at && a.to === id && a.owner !== PLAYER && !a.retreating) : []);
 
 function badgeHtml(t) {
   const s = state(t.id), own = s.owner === PLAYER;
   if (!s.visible) return { html: '<span class="muted">?</span>', title: `${t.name}: out of sight` };
-  const strength = defencePower(s.garrison, s.defence), units = total(s.garrison);
+  const strength = s.strength, units = total(s.force), camps = armiesAt(t.id).filter((a) => a.owner === s.owner && !a.siege).length;
   let html = `<span>${units}</span><span style="color:${colorOf(s.owner)}">${ICON.shield}</span><span>${strength.toFixed(strength < 10 ? 1 : 0)}</span>`;
-  let title = `${t.name}: ${unitText(s.garrison)}; defence strength ${strength.toFixed(1)} (×${s.defence.toFixed(2)})`;
+  let title = `${t.name}: ${unitText(s.force)}${camps ? `, ${camps} ${camps > 1 ? 'armies' : 'army'} camped` : ''}; defence strength ${strength.toFixed(1)} (×${s.defence.toFixed(2)})${s.siege ? `; needs a ${Math.round(s.siege)} s siege` : ''}`;
+  if (s.besieged) { html += ICON.threat; title += '; under siege'; }
   if (own) {
     let extra = '';
     for (const [kind, icon] of [['barracks', ICON.base], ['factory', ICON.factory]]) {
@@ -257,7 +289,7 @@ function badgeHtml(t) {
     if (s.fort) { extra += `<span style="color:#5b6672">${ICON.fort}</span><span class="lvl">${s.fort}</span>`; title += `; fortifications ${s.fort}`; }
     if (extra) html += `<span class="extra" style="display:contents">${extra}</span>`;
     if (!s.supplied) { html += ICON.cut; title += '; cut off from your capital, earning half'; }
-    if (threatsTo(t.id).length) { html += ICON.threat; title += '; an enemy group is heading here'; }
+    if (!s.besieged && threatsTo(t.id).length) { html += ICON.threat; title += '; an enemy army is heading here'; }
   } else if (s.fort) { html += `<span style="color:#5b6672">${ICON.fort}</span><span class="lvl">${s.fort}</span>`; title += `; fortifications ${s.fort}`; }
   return { html, title };
 }
@@ -271,7 +303,14 @@ function drawBadges() {
       // MapLibre positions the outer element; the badge itself sits inside it.
       const holder = document.createElement('div'), el = document.createElement('div');
       holder.appendChild(el);
-      el.addEventListener('click', (e) => { e.stopPropagation(); clickTown(t.id, e.ctrlKey || e.metaKey); });
+      el.dataset.town = t.id;
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (boxed) return; clickTown(t.id, e.ctrlKey || e.metaKey); });
+      // Drag from a town of yours to send its units somewhere.
+      el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || !mine(t.id) || !total(state(t.id).garrison)) return;
+        e.stopPropagation(); // or the map would start panning underneath
+        startDrag({ town: t.id }, e);
+      });
       el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); if (canOrder() && !(selTowns.length === 1 && selTowns[0] === t.id)) order(t.id); });
       el.addEventListener('mouseenter', () => hover(t.id));
       el.addEventListener('mouseleave', () => hover(null));
@@ -279,7 +318,7 @@ function drawBadges() {
       badges.set(t.id, b);
     }
     const s = state(t.id), { html, title } = badgeHtml(t);
-    const cls = `badge${selTowns.includes(t.id) ? ' sel' : ''}${mine(t.id) && threatsTo(t.id).length ? ' threat' : ''}${small ? ' small' : ''}`;
+    const cls = `badge${selTowns.includes(t.id) ? ' sel' : ''}${mine(t.id) && (s.besieged || threatsTo(t.id).length) ? ' threat' : ''}${small ? ' small' : ''}`;
     const key = cls + html + s.owner;
     if (key === b.key) continue;
     b.key = key;
@@ -290,42 +329,57 @@ function drawBadges() {
   }
 }
 
-function groupPoint(g, ahead = 0) {
-  const leg = g.path[g.leg], road = roadOf(leg.road);
-  const d = Math.min(road.length, g.dist + g.speed * ahead);
+/** Where an army is, in world metres. Camped armies sit in a row beside their town so each can be clicked. */
+function armyPoint(a, ahead = 0) {
+  if (a.at) {
+    const t = town(a.at), k = armiesAt(a.at).indexOf(a);
+    const p = map.project(toLngLat(t.x, t.y));
+    const q = map.unproject([p.x + 34 + 24 * (k % 4), p.y - 20 - 24 * Math.floor(k / 4)]);
+    return toMetres(q.lng, q.lat);
+  }
+  const leg = a.path[a.leg], road = roadOf(leg.road);
+  const d = Math.min(road.length, a.dist + a.speed * ahead);
   return pointAlong(road.pts, leg.rev ? road.length - d : d);
 }
 
-function drawGroups() {
+function drawArmies() {
   if (!map?.getSource('cq-groups') || !live) return;
-  // Between ticks, carry each group forward at its speed so movement is smooth.
+  // Between ticks, carry each marching army forward at its speed so movement is smooth.
   const running = live.winner === null || live.dismissed;
   const ahead = running ? Math.min(0.4, (performance.now() - tickAt) / 1000) * live.speed : 0;
-  map.getSource('cq-groups').setData(collection(live.groups.map((g) => {
-    const [x, y] = groupPoint(g, ahead);
+  map.getSource('cq-groups').setData(collection(live.armies.map((a) => {
+    const [x, y] = armyPoint(a, ahead);
     return { type: 'Feature', geometry: { type: 'Point', coordinates: toLngLat(x, y) },
-      properties: { id: g.id, color: colorOf(g.owner), label: String(g.infantry + g.vehicle), selected: g.id === selGroup ? 1 : 0 } };
+      properties: { id: a.id, color: colorOf(a.owner), label: String(a.infantry + a.vehicle), selected: a.id === selArmy ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
   })));
 }
-function frame() { drawGroups(); requestAnimationFrame(frame); }
+function frame() { drawArmies(); requestAnimationFrame(frame); }
 
 function drawRoute() {
   if (!map?.getSource('cq-route')) return;
   const lines = [];
   const target = hovered;
+  let shown = null;
   if (target && mode !== 'rally') {
-    if (selGroup !== null) {
-      if (mode === 'redirect') toast(`Redirect to ${town(target).name} — click to confirm`);
+    const a = selArmy !== null ? army(selArmy) : null;
+    if (a) {
+      // A camped army's march can be forecast; one already on the road is simply redirected.
+      if (a.at && a.at !== target) {
+        shown = forecast(a.at, target, a);
+        if (shown.pts) lines.push(lineOf(shown.pts));
+        toast(shown.text);
+      } else if (!a.at) toast(`Redirect ${a.name} to ${town(target).name}`);
     } else {
       const from = selTowns.filter((id) => mine(id) && id !== target && total(counts(id)));
       for (const id of from) {
         const f = forecast(id, target, counts(id));
         if (f.pts) lines.push(lineOf(f.pts));
-        if (from.length === 1) toast(`${f.text}${f.pts ? ` — ${mode ? 'click' : 'right-click'} to send` : ''}`);
+        if (from.length === 1) { shown = f; toast(f.text); }
       }
-      if (from.length > 1) toast(`Send from ${from.length} towns to ${town(target).name}; each group travels and fights on its own — ${mode ? 'click' : 'right-click'} to send`);
+      if (from.length > 1) toast(`Send from ${from.length} towns to ${town(target).name}; each army travels and fights on its own`);
     }
   }
+  showForecast(shown);
   map.getSource('cq-route').setData(lines.length ? { type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates: lines } } : empty);
 }
 
@@ -334,9 +388,9 @@ function hit(point, layer, pad = 4) {
   return found.length ? found[0].properties.id : null;
 }
 
-function select({ towns = [], group = null, road = null }) {
+function select({ towns = [], army: picked_ = null, road = null }) {
   selTowns = towns;
-  selGroup = group;
+  selArmy = picked_;
   selRoad = road;
   mode = null;
   pickAll = true;
@@ -351,8 +405,8 @@ function select({ towns = [], group = null, road = null }) {
 function order(to) {
   if (mode === 'rally' && selTowns.length === 1) {
     command({ type: 'rally', town: selTowns[0], to });
-  } else if (selGroup !== null) {
-    command({ type: 'redirect', group: selGroup, to });
+  } else if (selArmy !== null) {
+    command({ type: 'redirect', army: selArmy, to });
   } else {
     const from = selTowns.filter((id) => mine(id) && id !== to && total(counts(id)));
     if (!from.length) return toast('No units selected to send');
@@ -363,7 +417,7 @@ function order(to) {
   drawRoute();
   renderUi(true);
 }
-const canOrder = () => (selGroup !== null && live.groups.find((g) => g.id === selGroup)?.owner === PLAYER) || selTowns.some(mine);
+const canOrder = () => { const a = selArmy !== null ? army(selArmy) : null; return (myArmy(a) && !a.retreating) || selTowns.some(mine); };
 
 function clickTown(id, add) {
   if (mode && canOrder() && !selTowns.includes(id)) return order(id);
@@ -371,8 +425,46 @@ function clickTown(id, add) {
   select({ towns: [id] });
 }
 function hover(id) {
-  const target = id && canOrder() && !(selTowns.length === 1 && selTowns[0] === id) ? id : null;
+  const target = id && canOrder() && !(selTowns.length === 1 && selTowns[0] === id) && army(selArmy)?.at !== id ? id : null;
   if (target !== hovered) { hovered = target; drawRoute(); }
+}
+/** Begin dragging an order out of a town or army. It only becomes a drag once the pointer has moved a little. */
+function startDrag(source, down) {
+  drag = { source, x0: down.clientX, y0: down.clientY, live: false };
+  const origin = () => map.getCanvasContainer().getBoundingClientRect();
+  const move = (e) => {
+    if (!drag) return;
+    if (!drag.live) {
+      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 8) return;
+      drag.live = true;
+      map.dragPan.disable();
+      // Dragging from a town that is already selected keeps the cards picked there.
+      if (source.army !== undefined) { if (selArmy !== source.army) select({ army: source.army }); }
+      else if (!(selTowns.length === 1 && selTowns[0] === source.town)) select({ towns: [source.town] });
+    }
+    const o = origin(), p = [e.clientX - o.left, e.clientY - o.top];
+    const under = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.badge');
+    hover(under ? under.dataset.town : hit({ x: p[0], y: p[1] }, 'cq-area'));
+    const a = source.army !== undefined ? army(source.army) : null;
+    const start = a ? armyPoint(a) : [town(source.town).x, town(source.town).y];
+    const end = map.unproject(p);
+    map.getSource('cq-drag')?.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [toLngLat(start[0], start[1]), [end.lng, end.lat]] } });
+  };
+  const up = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    const was = drag;
+    drag = null;
+    if (!was?.live) return;
+    map.dragPan.enable();
+    map.getSource('cq-drag')?.setData(empty);
+    // Swallow the click that follows the release.
+    boxed = true;
+    setTimeout(() => { boxed = false; }, 60);
+    if (hovered) order(hovered); else { hover(null); drawRoute(); }
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
 }
 const goTo = (x, y, zoom) => map.easeTo({ center: toLngLat(x, y), zoom: zoom ?? Math.max(map.getZoom(), 12), duration: 500 });
 
@@ -383,14 +475,20 @@ function startMap() {
     center: toLngLat(start.x, start.y), zoom: 12.2, minZoom: 8, maxZoom: 18, attributionControl: false, boxZoom: false, keyboard: false,
   });
   window.map = map;
-  map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
-  map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'bottom-right');
+  map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'top-left');
   map.on('style.load', addOverlay);
   map.on('zoomend', drawBadges);
+  map.on('move', drawMini);
+  map.on('mousedown', 'cq-groups', (e) => {
+    const a = army(e.features[0].properties.id);
+    if (e.originalEvent.button !== 0 || e.originalEvent.shiftKey || !myArmy(a) || a.retreating) return;
+    e.preventDefault();
+    startDrag({ army: a.id }, e.originalEvent);
+  });
   map.on('click', (e) => {
     if (boxed) { boxed = false; return; }
     const group = hit(e.point, 'cq-groups', 8), id = hit(e.point, 'cq-area'), road = hit(e.point, 'cq-road-hit', 6);
-    if (group !== null && !mode) return select({ group });
+    if (group !== null && !mode) return select({ army: group });
     if (id) return clickTown(id, e.originalEvent.ctrlKey || e.originalEvent.metaKey);
     if (road && !mode) return select({ road });
     select({});
@@ -402,7 +500,7 @@ function startMap() {
   map.on('mousemove', (e) => {
     const id = hit(e.point, 'cq-area');
     map.getCanvas().style.cursor = id || hit(e.point, 'cq-groups', 8) !== null || hit(e.point, 'cq-road-hit', 6) ? 'pointer' : '';
-    hover(id);
+    if (!drag) hover(id);
   });
   // Shift-drag draws a box and selects every town of yours inside it.
   const canvas = map.getCanvasContainer();
@@ -497,6 +595,103 @@ $('log-toggle').addEventListener('click', () => {
   $('events').scrollTop = $('events').scrollHeight;
 });
 
+// ----- Alerts -----
+// What needs attention right now, as a column of buttons. Click one to go to the next place it is about.
+
+function alertsNow() {
+  const own = game.graph.towns.filter((t) => mine(t.id));
+  const at = (t) => ({ x: t.x, y: t.y, pick: { towns: [t.id] } });
+  const of = (a) => { const [x, y] = a.at ? [town(a.at).x, town(a.at).y] : armyPoint(a); return { x, y, pick: { army: a.id } }; };
+  return [
+    { kind: 'attack', icon: ICON.threat, color: '#d1345b', title: 'under siege or with an enemy army on its way', places: own.filter((t) => state(t.id).besieged || threatsTo(t.id).length).map(at) },
+    { kind: 'siege', icon: UI.fort, color: '#d97706', title: 'of your armies besieging a town', places: live.armies.filter((a) => myArmy(a) && a.siege).map(of) },
+    { kind: 'idle', icon: UI.flag, color: '#1f6feb', title: 'of your armies camped and waiting for orders', places: live.armies.filter(camped).map(of) },
+    { kind: 'cut', icon: ICON.cut, color: '#d97706', title: 'cut off from your capital and earning half', places: own.filter((t) => state(t.id).supplied === false).map(at) },
+    { kind: 'built', icon: UI.base, color: '#2e7d32', title: 'just finished building', places: live.events.filter((e) => e.kind === 'built' && e.at && live.clock - e.clock < 25).map((e) => ({ x: e.at[0], y: e.at[1], pick: {} })) },
+  ].filter((a) => a.places.length);
+}
+
+let alertsKey = '';
+function drawAlerts() {
+  const list = alertsNow();
+  const key = JSON.stringify(list.map((a) => [a.kind, a.places.length]));
+  if (key === alertsKey) return;
+  alertsKey = key;
+  $('alerts').innerHTML = list.map((a) => `<button class="alert" data-alert="${a.kind}" style="--c:${a.color}" title="${a.places.length} ${a.title} — click to go there">
+    ${a.icon}<span class="count">${a.places.length}</span></button>`).join('');
+}
+$('alerts').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-alert]');
+  const a = b && alertsNow().find((x) => x.kind === b.dataset.alert);
+  if (!a) return;
+  cycle[a.kind] = ((cycle[a.kind] ?? -1) + 1) % a.places.length;
+  const place = a.places[cycle[a.kind]];
+  if (place.pick.towns || place.pick.army !== undefined) select(place.pick);
+  goTo(place.x, place.y);
+});
+
+// ----- Minimap -----
+
+function miniScale() {
+  const c = $('mini'), b = game.world.boundsM;
+  const k = Math.min(c.width / (b.maxx - b.minx), c.height / (b.maxy - b.miny));
+  const ox = (c.width - (b.maxx - b.minx) * k) / 2, oy = (c.height - (b.maxy - b.miny) * k) / 2;
+  return { k, to: (x, y) => [ox + (x - b.minx) * k, c.height - oy - (y - b.miny) * k], from: (px, py) => [b.minx + (px - ox) / k, b.miny + (c.height - oy - py) / k] };
+}
+
+function drawMini() {
+  if (!game || !live || !map) return;
+  const c = $('mini'), g = c.getContext('2d'), { k, to } = miniScale(), b = game.world.boundsM;
+  g.clearRect(0, 0, c.width, c.height);
+  g.fillStyle = '#e6e9dc';
+  const [x0, y1] = to(b.minx, b.miny), [x1, y0] = to(b.maxx, b.maxy);
+  g.fillRect(x0, y0, x1 - x0, y1 - y0);
+  for (const p of land) {
+    g.fillStyle = `${colorOf(p.owner)}66`;
+    g.beginPath();
+    for (const r of p.rings) { r.forEach(([x, y], i) => { const q = to(x, y); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); }); g.closePath(); }
+    g.fill('evenodd');
+  }
+  for (const t of game.graph.towns) {
+    const [x, y] = to(t.x, t.y), s = state(t.id);
+    g.fillStyle = colorOf(s.owner);
+    g.beginPath();
+    g.arc(x, y, 2.5 + t.tier * 0.9, 0, Math.PI * 2);
+    g.fill();
+    if (s.besieged || threatsTo(t.id).length) { g.strokeStyle = '#d1345b'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 6 + t.tier, 0, Math.PI * 2); g.stroke(); }
+  }
+  for (const a of live.armies) {
+    if (a.at) continue;
+    const [x, y] = to(...armyPoint(a));
+    g.fillStyle = colorOf(a.owner);
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 1;
+    g.fillRect(x - 3, y - 3, 6, 6);
+    g.strokeRect(x - 3, y - 3, 6, 6);
+  }
+  // The part of the map on screen.
+  const v = map.getBounds(), [vx0, vy0] = toMetres(v.getWest(), v.getSouth()), [vx1, vy1] = toMetres(v.getEast(), v.getNorth());
+  const [a0, b1] = to(vx0, vy0), [a1, b0] = to(vx1, vy1);
+  g.strokeStyle = '#1f2933';
+  g.lineWidth = 1.5;
+  g.strokeRect(Math.max(1, a0), Math.max(1, b0), Math.min(c.width - 2, a1) - Math.max(1, a0), Math.min(c.height - 2, b1) - Math.max(1, b0));
+}
+{
+  // Click or drag on the minimap to look there.
+  const look = (e) => {
+    if (!map || !game) return;
+    const c = $('mini'), r = c.getBoundingClientRect();
+    const [x, y] = miniScale().from(((e.clientX - r.left) * c.width) / r.width, ((e.clientY - r.top) * c.height) / r.height);
+    map.jumpTo({ center: toLngLat(x, y) });
+  };
+  $('mini').addEventListener('mousedown', (e) => {
+    look(e);
+    const up = () => { document.removeEventListener('mousemove', look); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', look);
+    document.addEventListener('mouseup', up);
+  });
+}
+
 // ----- Command bar -----
 // Laid out like a strategy game's campaign panel: who is selected on the left, their
 // units as a row of cards in the middle, and square slots for everything they can do
@@ -522,6 +717,8 @@ const UI = {
   river: svg('<path d="M2 8c3-3 5 3 8 0s5 3 8 0 3 1 4 0M2 15c3-3 5 3 8 0s5 3 8 0 3 1 4 0" fill="none" stroke="currentColor" stroke-width="2.400" stroke-linecap="round"/>'),
   port: svg('<circle cx="12" cy="5" r="2.200" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.500V21M5 13c0 5 3.500 8 7 8s7-3 7-8M8 11h8" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round"/>'),
   rail: svg('<path d="M7 3v18M17 3v18M7 7h10M7 12h10M7 17h10" stroke="currentColor" stroke-width="2.200" stroke-linecap="round"/>'),
+  merge: svg('<path d="M5 4v5a7 7 0 0 0 7 7M19 4v5a7 7 0 0 1-7 7v5M8.500 18 12 21.500l3.500-3.500" fill="none" stroke="currentColor" stroke-width="2.600" stroke-linecap="round" stroke-linejoin="round"/>'),
+  split: svg('<path d="M12 21v-5a7 7 0 0 0-7-7V4M12 16a7 7 0 0 1 7-7V4M2 7.500 5 4l3 3.500M16 7.500 19 4l3 3.500" fill="none" stroke="currentColor" stroke-width="2.600" stroke-linecap="round" stroke-linejoin="round"/>'),
   repeat: svg('<path d="M5 11a7 7 0 0 1 12-4.500L19 8.500M19 13a7 7 0 0 1-12 4.500L5 15.500M19 4v4.500h-4.500M5 20v-4.500h4.500" fill="none" stroke="currentColor" stroke-width="2.300" stroke-linecap="round" stroke-linejoin="round"/>'),
 };
 
@@ -535,14 +732,17 @@ function cardsOf(units) {
   for (const kind of game.unitKinds) for (let left = units?.[kind] || 0; left > 0; left -= size) out.push({ kind, n: Math.min(size, left) });
   return out;
 }
-/** How many of each unit the cards picked in a town add up to. */
-function pickedUnits(id) {
-  const g = state(id).garrison ?? {};
+/** How many of each unit the picked cards add up to, out of the units the tray is showing. */
+function pickedOf(units) {
+  const g = units ?? {};
   if (pickAll) return Object.fromEntries(game.unitKinds.map((k) => [k, g[k] || 0]));
   const out = Object.fromEntries(game.unitKinds.map((k) => [k, 0]));
   cardsOf(g).forEach((c, i) => { if (picked.has(i)) out[c.kind] += c.n; });
   return out;
 }
+const pickedUnits = (id) => pickedOf(state(id).garrison);
+/** The units whose cards can be picked right now: the selected army's, or the selected town's garrison. */
+const trayUnits = () => (selArmy !== null ? army(selArmy) : state(selTowns[0])?.garrison);
 
 function tray(units, owner, selectable) {
   const cards = cardsOf(units);
@@ -565,15 +765,31 @@ const who = (title, sub, owner, chips = '') => `<div class="who" style="--c:${co
 
 function cmdHtml() {
   const cash = live.me.money, rules = game.rules;
-  if (selGroup !== null) {
-    const g = live.groups.find((x) => x.id === selGroup);
-    if (!g) return '';
-    const own = g.owner === PLAYER;
-    return who(`Group of ${g.infantry + g.vehicle}`, own ? 'on the road' : esc(faction(g.owner).name), g.owner,
-      chip(UI.go, esc(town(g.to).name), `Heading for ${town(g.to).name}`) + chip(UI.shield, attackPower(g).toFixed(0), 'Attack strength'))
-      + `<div class="mid">${tray(g, g.owner, false)}<div class="tip">${own ? 'Right-click a town to send them somewhere else' : ''}</div></div>`
-      + (own ? `<div class="slots">${slot({ key: 's', icon: UI.go, does: 'mode:redirect', cls: mode === 'redirect' ? 'on' : '', caption: mode === 'redirect' ? 'click a town' : 'Redirect', title: 'Send this group to a different town' })}
-        ${slot({ key: 'b', icon: UI.back, does: 'recall', caption: 'Recall', title: `Turn back to ${town(g.from).name}` })}</div>` : '');
+  if (selArmy !== null) {
+    const a = army(selArmy);
+    if (!a) return '';
+    const own = myArmy(a), free = camped(a), n = a.infantry + a.vehicle;
+    const where = a.siege ? `besieging ${town(a.at).name}` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`;
+    const chips = chip(UI.shield, attackPower(a).toFixed(0), 'Attack strength')
+      + (a.siege ? chip(UI.fort, `${Math.round(100 * a.siege.progress / a.siege.need)}%`, `Siege: ${Math.round(a.siege.need - a.siege.progress)} s until the walls are breached`, '#d97706') : '');
+    let html = who(esc(a.name), `${own ? '' : `${esc(faction(a.owner).name)} · `}${esc(where)}`, a.owner, chips);
+    const going = free ? total(pickedOf(a)) : n;
+    html += `<div class="mid"><div class="pick"><span><b>${free ? going : n}</b>${free ? ` of ${n} selected` : ` unit${n > 1 ? 's' : ''}`}</span>
+      ${free && n > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
+      <span class="tip">${!own ? '' : a.retreating ? 'falling back, takes no orders' : 'drag or right-click to send'}</span></div>${tray(a, a.owner, free)}</div>`;
+    if (!own) return html;
+    html += '<div class="slots">';
+    if (!a.retreating) html += slot({ key: 's', icon: UI.go, does: 'mode:redirect', cls: mode === 'redirect' ? 'on' : '', caption: mode === 'redirect' ? 'click a town' : 'March', title: 'Send this army to a town' });
+    if (a.siege) html += slot({ key: 't', icon: UI.fort, does: 'storm', caption: 'Storm', title: 'Attack now instead of waiting for the siege, against the full fortifications' });
+    if (!a.at && !a.retreating) html += slot({ key: 'b', icon: UI.back, does: 'recall', caption: 'Recall', title: `Turn back to ${town(a.from).name}` });
+    const others = a.at ? armiesAt(a.at).filter((o) => o !== a && o.owner === PLAYER && !o.retreating && !!o.siege === !!a.siege).length : 0;
+    if (others) html += slot({ key: 'g', icon: UI.merge, does: 'merge', caption: 'Merge', badge: others + 1, title: `Combine with the ${others > 1 ? `${others} other armies` : 'other army'} here` });
+    if (free) {
+      html += slot({ key: 'x', icon: UI.split, does: 'split', caption: 'Split', disabled: pickAll || !going || going >= n, title: 'Pick some of its cards, then split them off as a new army' });
+      html += slot({ key: 'v', icon: UI.fort, does: 'garrison', caption: 'Stand down', title: `Dissolve the army into the garrison of ${town(a.at).name}` });
+    }
+    html += slot({ key: 'n', icon: UI.flag, does: 'rename', caption: 'Rename', title: 'Give this army a name' });
+    return `${html}</div>`;
   }
   if (selRoad) {
     const r = roadOf(selRoad), c = cutState(r.id), bridge = r.bridges.length > 0, k = rules.roads, can = mine(r.a) || mine(r.b);
@@ -606,9 +822,12 @@ function cmdHtml() {
   let html = who(esc(t.name), `${TIERS[t.tier]}${live.me.capital === id ? ' · capital' : ''}`, PLAYER,
     chip(UI.coin, `+${Math.round(s.income)}`, `Earns ${Math.round(s.income)} a minute${s.supplied ? '' : ' — halved, cut off from your capital'}`, s.supplied ? '#8a6d1c' : '#d97706')
     + chip(UI.shield, defencePower(s.garrison, s.defence).toFixed(1), `Defence strength (garrison × ${s.defence.toFixed(2)})`, '#5b6672') + traits);
-  html += `<div class="mid"><div class="pick"><span>${all ? `<b>${going}</b> of ${all} selected` : 'Garrison'}</span>
+  const here = armiesAt(id).filter((a) => a.owner === PLAYER);
+  const banners = here.length ? `<div class="banners">${here.map((a) => `<button class="banner" data-army="${a.id}" title="Select ${esc(a.name)}">${UI.flag}<b>${esc(a.name)}</b> ${a.infantry + a.vehicle}</button>`).join('')}</div>` : '';
+  html += `<div class="mid">${banners}<div class="pick"><span>${all ? `<b>${going}</b> of ${all} in the garrison selected` : 'Garrison'}</span>
       ${all > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
-      ${all ? `<span class="tip">${mode === 'send' ? 'now click a town' : 'right-click a town to send them'}</span>` : ''}</div>${tray(s.garrison, PLAYER, true)}</div><div class="slots">`;
+      ${all ? `<span class="tip">drag or right-click to send</span>` : ''}</div>${tray(s.garrison, PLAYER, true)}</div><div class="slots">`;
+  if (all) html += slot({ key: 'y', icon: UI.flag, does: 'muster', caption: 'Muster', disabled: !going, title: 'Form the selected units into an army camped here, ready for orders' }) + '<span class="gap"></span>';
   [['barracks', 'q'], ['factory', 'w']].forEach(([kind, key]) => {
     const rule = rules.buildings[kind], unit = rules.units[rule.trains], b = s.buildings[kind];
     const icon = kind === 'barracks' ? UI.base : UI.factory;
@@ -655,8 +874,10 @@ function renderUi(force) {
   const s = selTowns.length === 1 ? state(selTowns[0]) : null;
   // Rebuild only when something other than a progress bar changes, so clicks are never lost mid-press.
   const afford = [50, 60, 100, 120, 150, 200, 240, 300, 350, 360, 400, 500, 600, 800, 1000, 1500].map((c) => live.me.money >= c);
-  const g = selGroup !== null ? live.groups.find((x) => x.id === selGroup) : null;
-  const key = JSON.stringify([selTowns, selGroup, selRoad, mode, details, afford, live.roads, g && [g.to, g.infantry, g.vehicle], pickAll, [...picked],
+  const g = selArmy !== null ? army(selArmy) : null;
+  const key = JSON.stringify([selTowns, selArmy, selRoad, mode, details, afford, live.roads, pickAll, [...picked],
+    g && [g.name, g.at, g.to, g.infantry, g.vehicle, g.retreating, g.siege && Math.round(100 * g.siege.progress / g.siege.need), g.at && armiesAt(g.at).length],
+    selTowns.map((id) => armiesAt(id).map((a) => [a.id, a.name, a.infantry + a.vehicle])),
     selTowns.map((id) => [state(id).owner, state(id).garrison, state(id).visible, state(id).rally, state(id).supplied, state(id).market, state(id).fort, Math.round(state(id).income ?? 0)]),
     s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, b.queue, b.repeat])]);
   if (force || key !== cmdKey) {
@@ -712,10 +933,16 @@ function perform(does, at, many = false) {
   else if (what === 'cut') command({ type: 'cut', road: does.slice(4) });
   else if (what === 'repair') command({ type: 'repair', road: does.slice(7) });
   else if (what === 'norally') command({ type: 'rally', town: id, to: null });
-  else if (what === 'recall') command({ type: 'redirect', group: selGroup });
+  else if (what === 'recall') command({ type: 'redirect', army: selArmy });
+  else if (what === 'storm') { if (confirm('Storm the town now? Its fortifications will count in full.')) command({ type: 'storm', army: selArmy }); }
+  else if (what === 'merge') command({ type: 'merge', army: selArmy });
+  else if (what === 'garrison') { const at = army(selArmy)?.at; command({ type: 'garrison', army: selArmy }).then(() => at && select({ towns: [at] })); }
+  else if (what === 'split') { command({ type: 'split', army: selArmy, ...pickedOf(army(selArmy)) }); pickAll = true; picked = new Set(); }
+  else if (what === 'muster') { command({ type: 'muster', town: id, ...pickedUnits(id) }); pickAll = true; picked = new Set(); }
+  else if (what === 'rename') { const name = prompt('Name for this army', army(selArmy)?.name ?? ''); if (name) command({ type: 'rename', army: selArmy, name }); }
   else if (what === 'details') { details = !details; renderUi(true); }
   else if (what === 'pick') {
-    const n = cardsOf(state(id).garrison).length;
+    const n = cardsOf(trayUnits()).length;
     pickAll = arg === 'all';
     picked = new Set(arg === 'half' ? Array.from({ length: Math.ceil(n / 2) }, (_, i) => i) : []);
     drawRoute();
@@ -730,6 +957,8 @@ for (const id of ['cmd', 'panel', 'prod']) {
   $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button[data-do]');
     if (b && !b.disabled) perform(b.dataset.do, b.dataset.town, e.shiftKey);
+    const banner = e.target.closest('[data-army]');
+    if (banner) select({ army: Number(banner.dataset.army) });
     const go = e.target.closest('[data-goto]');
     if (go) { const t = town(go.dataset.goto); select({ towns: [t.id] }); goTo(t.x, t.y); }
   });
@@ -745,7 +974,7 @@ for (const id of ['cmd', 'panel', 'prod']) {
 $('cmd').addEventListener('click', (e) => {
   const card = e.target.closest('[data-card]');
   if (!card) return;
-  const i = Number(card.dataset.card), n = cardsOf(state(selTowns[0]).garrison).length;
+  const i = Number(card.dataset.card), n = cardsOf(trayUnits()).length;
   const current = pickAll ? new Set(Array.from({ length: n }, (_, k) => k)) : new Set(picked);
   if (e.shiftKey) { current.clear(); for (let k = Math.min(lastCard, i); k <= Math.max(lastCard, i); k++) current.add(k); }
   else if (e.ctrlKey || e.metaKey) { if (current.has(i)) current.delete(i); else current.add(i); }
@@ -759,7 +988,7 @@ $('cmd').addEventListener('click', (e) => {
 $('cmd').addEventListener('dblclick', (e) => {
   const card = e.target.closest('[data-card]');
   if (!card) return;
-  const cards = cardsOf(state(selTowns[0]).garrison), kind = cards[Number(card.dataset.card)].kind;
+  const cards = cardsOf(trayUnits()), kind = cards[Number(card.dataset.card)].kind;
   pickAll = false;
   picked = new Set(cards.map((c, k) => (c.kind === kind ? k : -1)).filter((k) => k >= 0));
   drawRoute();
@@ -841,11 +1070,13 @@ document.addEventListener('keydown', (e) => {
 function onTick(data) {
   live = data;
   tickAt = performance.now();
-  if (selGroup !== null && !live.groups.some((g) => g.id === selGroup)) { selGroup = null; mode = null; }
+  if (selArmy !== null && !army(selArmy)) { selArmy = null; mode = null; }
   drawHud();
   drawStatic();
   drawBadges();
   drawEvents();
+  drawAlerts();
+  drawMini();
   renderUi();
 }
 
@@ -868,7 +1099,7 @@ function play(full) {
   live = full.live;
   land = full.territory;
   tickAt = performance.now();
-  selTowns = []; selGroup = null; selRoad = null; mode = null; lastEvent = 0; lastPlace = null;
+  selTowns = []; selArmy = null; selRoad = null; mode = null; lastEvent = 0; lastPlace = null;
   $('events').innerHTML = '';
   for (const b of badges.values()) b.marker.remove();
   badges.clear();
@@ -882,7 +1113,7 @@ function play(full) {
   stream = new EventSource(`/api/conquer/${game.world.id}/events`);
   stream.addEventListener('tick', (e) => onTick(JSON.parse(e.data)));
   stream.addEventListener('graph', (e) => onGraph(JSON.parse(e.data)));
-  stream.addEventListener('territory', (e) => { land = JSON.parse(e.data); drawLand(); });
+  stream.addEventListener('territory', (e) => { land = JSON.parse(e.data); drawLand(); drawMini(); });
 }
 
 async function refreshList(selectId) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { think } from './ai.ts';
 import { NEUTRAL, PLAYER, RIVAL, RULES } from './rules.ts';
-import { Sim, attackPower, defencePower, fight, newState, speedOn, type RawGraph } from './sim.ts';
+import { Sim, attackPower, defencePower, fight, newState, share, speedOn, type RawGraph } from './sim.ts';
 
 // A small hand-made map: five towns in a line, A–B–C–D–E, 4 km apart, plus a back road A–C.
 const town = (id: string, x: number, tier = 1) => ({
@@ -23,6 +23,10 @@ function game(rival = false) {
   return { sim, s: sim.state, me: sim.faction(PLAYER) };
 }
 const run = (sim: Sim, seconds: number) => { for (let t = 0; t < seconds * 5; t++) sim.step(0.2); };
+const empty = () => ({ infantry: 0, vehicle: 0 });
+/** Hand a town to a side with a given garrison. */
+const give = (sim: Sim, id: string, owner: number, infantry = 0) => { sim.state.towns[id].owner = owner; sim.state.towns[id].garrison = { infantry, vehicle: 0 }; sim.refresh(); };
+const armiesOf = (sim: Sim, owner: number) => sim.state.armies.filter((a) => a.owner === owner);
 
 test('the player starts in the middle town; the rest are neutral and garrisoned', () => {
   const { s, me } = game();
@@ -39,9 +43,10 @@ test('a town earns its income per minute', () => {
   assert.ok(Math.abs(me.money - before - RULES.income[1]) < 0.5);
 });
 
-test('units cost upkeep, and money never goes below zero', () => {
+test('units cost upkeep, in a garrison or an army, and money never goes below zero', () => {
   const { sim, s, me } = game();
   s.towns.c.garrison.infantry = 10;
+  sim.command({ type: 'muster', town: 'c', infantry: 4 });
   const before = me.money;
   run(sim, 60);
   assert.ok(Math.abs(me.money - before - (RULES.income[1] - 10 * RULES.units.infantry.upkeep)) < 0.5);
@@ -85,53 +90,160 @@ test('repeat training keeps queueing while there is money', () => {
   assert.equal(s.towns.c.garrison.infantry, 3);
 });
 
-test('fights: the stronger side wins and loses more the closer it was', () => {
-  const easy = fight({ infantry: 20, vehicle: 0 }, 20, { infantry: 2, vehicle: 0 }, 3);
+test('fights: the stronger side wins, loses more the closer it was, and the loser keeps a share', () => {
+  const easy = fight(20, 3);
   assert.equal(easy.win, true);
-  assert.equal(easy.att.infantry, 19);
-  const close = fight({ infantry: 10, vehicle: 0 }, 10, { infantry: 6, vehicle: 0 }, 9);
-  assert.equal(close.win, true);
-  assert.ok(close.att.infantry <= 2);
-  const lost = fight({ infantry: 4, vehicle: 0 }, 4, { infantry: 5, vehicle: 0 }, 7.5);
-  assert.equal(lost.win, false);
-  assert.equal(lost.att.infantry, 0);
-  assert.ok(lost.def.infantry >= 3);
+  assert.equal(share({ infantry: 20, vehicle: 0 }, 1 - easy.loss, true).infantry, 19);
+  const close = fight(10, 9);
+  assert.ok(close.win && close.loss > 0.8);
+  assert.ok(close.keep > easy.keep);
+  assert.equal(fight(4, 7.5).win, false);
+  assert.equal(fight(5, 5).win, false); // a tie goes to the defender
   assert.equal(attackPower({ infantry: 2, vehicle: 2 }), 8);
   assert.equal(defencePower({ infantry: 2, vehicle: 2 }, 1.5), 12);
 });
 
-test('a strong enough group takes a town; a weak one is destroyed', () => {
+test('an army that takes a town camps there as an army', () => {
   const { sim, s } = game();
   s.towns.c.garrison.infantry = 12;
   assert.deepEqual(sim.command({ type: 'move', from: 'c', to: 'd', infantry: 10 }), { ok: true });
-  assert.equal(s.groups.length, 1);
+  assert.equal(s.armies.length, 1);
+  assert.equal(s.armies[0].name, '1st Army');
   run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 1);
   assert.equal(s.towns.d.owner, PLAYER);
-  assert.ok(s.towns.d.garrison.infantry >= 4 && s.towns.d.garrison.infantry < 10);
-  sim.command({ type: 'move', from: 'c', to: 'b', infantry: 2 });
-  run(sim, 60);
-  assert.equal(s.towns.b.owner, NEUTRAL);
-  assert.equal(s.groups.length, 0);
-  assert.ok(s.towns.b.garrison.infantry < RULES.neutralGarrison[1].infantry);
+  assert.deepEqual(s.towns.d.garrison, empty());
+  assert.equal(s.armies.length, 1);
+  assert.equal(s.armies[0].at, 'd');
+  assert.ok(s.armies[0].infantry >= 4 && s.armies[0].infantry < 10);
+  assert.equal(sim.strengthOf('d'), defencePower(s.armies[0], 1)); // it defends the town it is camped in
 });
 
-test('a group halts at the first hostile town on its route', () => {
+test('a beaten attacker retreats home with part of its force', () => {
+  const { sim, s } = game();
+  s.towns.c.garrison.infantry = 4;
+  sim.command({ type: 'move', from: 'c', to: 'b', infantry: 4 }); // 4 against 3 × 1.5 = 4.5
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 1);
+  assert.equal(s.towns.b.owner, NEUTRAL);
+  assert.ok(s.towns.b.garrison.infantry < 3);
+  assert.equal(s.armies.length, 1);
+  assert.equal(s.armies[0].retreating, true);
+  assert.equal(s.armies[0].infantry, 2);
+  assert.deepEqual(sim.command({ type: 'redirect', army: s.armies[0].id, to: 'd' }), { error: 'that army is retreating and takes no orders' });
+  run(sim, 60);
+  assert.equal(s.armies[0].at, 'c');
+  assert.equal(s.armies[0].retreating, false);
+});
+
+test('defenders who lose a town retreat to the next one their side holds', () => {
+  const { sim, s } = game(true);
+  const rival = sim.faction(RIVAL).capital, near = rival === 'a' ? 'b' : 'd';
+  give(sim, near, RIVAL, 6);
+  s.towns.c.garrison.infantry = 30;
+  sim.command({ type: 'move', from: 'c', to: near, infantry: 30 });
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 1);
+  assert.equal(s.towns[near].owner, PLAYER);
+  const fled = armiesOf(sim, RIVAL);
+  assert.equal(fled.length, 1);
+  assert.equal(fled[0].retreating, true);
+  assert.equal(fled[0].to, rival);
+  assert.ok(fled[0].infantry >= 1 && fled[0].infantry <= 3);
+});
+
+test('an army halts at the first hostile town on its route', () => {
   const { sim, s } = game();
   s.towns.c.garrison.infantry = 30;
   sim.command({ type: 'move', from: 'c', to: 'e', infantry: 30 });
   run(sim, 60);
   assert.equal(s.towns.d.owner, PLAYER);
   assert.equal(s.towns.e.owner, NEUTRAL);
-  assert.equal(s.groups.length, 0);
+  assert.equal(s.armies[0].at, 'd');
 });
 
-test('hill sites and fortifications make a town harder to take', () => {
+test('a fortified town must be besieged; the siege breaches its walls', () => {
+  const { sim, s } = game();
+  s.towns.d.fort = 2;
+  assert.equal(sim.siegeNeed('d'), 2 * RULES.siege.perFort);
+  assert.equal(sim.defenceOf('d'), 1.5);
+  assert.equal(sim.defenceOf('d', true), 1);
+  s.towns.c.garrison.infantry = 6;
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 6 }); // 6 beats 4.5 breached, not 6.75 behind the walls
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 2);
+  assert.equal(s.towns.d.owner, NEUTRAL);
+  assert.ok(s.armies[0].siege);
+  assert.equal(sim.incomeOf('d'), 0);
+  run(sim, sim.siegeNeed('d'));
+  assert.equal(s.towns.d.owner, PLAYER);
+});
+
+test('storming a besieged town at once means facing the walls', () => {
+  const { sim, s } = game();
+  s.towns.d.fort = 2;
+  s.towns.c.garrison.infantry = 6;
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 6 });
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 2);
+  assert.deepEqual(sim.command({ type: 'storm', army: s.armies[0].id }), { ok: true });
+  assert.equal(s.towns.d.owner, NEUTRAL);
+  assert.equal(s.armies[0].retreating, true);
+});
+
+test('a relief force can break a siege, and its losers fall back', () => {
+  const { sim, s } = game(true);
+  const home = sim.faction(RIVAL).capital, near = home === 'a' ? 'b' : 'd';
+  give(sim, near, RIVAL, 2);
+  s.towns[near].fort = 3;
+  s.towns.c.garrison.infantry = 8;
+  sim.command({ type: 'move', from: 'c', to: near, infantry: 8 });
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 2);
+  assert.ok(armiesOf(sim, PLAYER)[0].siege);
+  s.towns[home].garrison.infantry = 20;
+  sim.command({ type: 'move', from: home, to: near, infantry: 20 }, RIVAL);
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 2);
+  assert.equal(s.towns[near].owner, RIVAL);
+  assert.equal(sim.besiegersOf(near).length, 0);
+  const mine = armiesOf(sim, PLAYER);
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].retreating, true);
+  assert.equal(armiesOf(sim, RIVAL)[0].at, near);
+});
+
+test('armies can be formed, split, merged and stood down', () => {
+  const { sim, s } = game();
+  s.towns.c.garrison.infantry = 10;
+  sim.command({ type: 'muster', town: 'c', infantry: 6 });
+  const first = s.armies[0];
+  assert.equal(first.at, 'c');
+  assert.equal(s.towns.c.garrison.infantry, 4);
+  assert.deepEqual(sim.command({ type: 'split', army: first.id, infantry: 6 }), { error: 'pick some of its units, not all or none' });
+  sim.command({ type: 'split', army: first.id, infantry: 2 });
+  assert.deepEqual(s.armies.map((a) => a.infantry), [4, 2]);
+  sim.command({ type: 'rename', army: first.id, name: 'Old Guard' });
+  sim.command({ type: 'merge', army: first.id });
+  assert.equal(s.armies.length, 1);
+  assert.equal(first.infantry, 6);
+  assert.equal(first.name, 'Old Guard');
+  sim.command({ type: 'garrison', army: first.id });
+  assert.equal(s.armies.length, 0);
+  assert.equal(s.towns.c.garrison.infantry, 10);
+});
+
+test('a camped army can be ordered to march', () => {
+  const { sim, s } = game();
+  give(sim, 'd', PLAYER);
+  s.towns.c.garrison.infantry = 5;
+  sim.command({ type: 'muster', town: 'c', infantry: 5 });
+  assert.deepEqual(sim.command({ type: 'redirect', army: s.armies[0].id, to: 'd' }), { ok: true });
+  assert.equal(s.armies[0].at, null);
+  run(sim, 60);
+  assert.equal(s.armies[0].at, 'd');
+  assert.equal(s.towns.d.garrison.infantry, 0);
+});
+
+test('hill sites make a town harder to take', () => {
   const { sim, s } = game();
   sim.nodes.get('d')!.traits.hill = true;
-  s.towns.d.fort = 2;
-  assert.equal(sim.defenceOf('d'), 1.75);
-  s.towns.c.garrison.infantry = 7;
-  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 7 }); // 7 against 3 × 1.5 × 1.75 = 7.9; it would beat the plain 4.5
+  assert.equal(sim.defenceOf('d'), 1.25);
+  s.towns.c.garrison.infantry = 5;
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 5 }); // 5 against 3 × 1.5 × 1.25 = 5.6; it would beat the plain 4.5
   run(sim, 60);
   assert.equal(s.towns.d.owner, NEUTRAL);
 });
@@ -161,13 +273,12 @@ test('cutting a road forces a detour and costs less at a bridge', () => {
 
 test('a town cut off from the capital earns half', () => {
   const { sim, s } = game();
-  s.towns.d.owner = PLAYER;
-  s.towns.e.owner = PLAYER;
-  sim.upkeepSupplyVision();
+  give(sim, 'd', PLAYER);
+  give(sim, 'e', PLAYER);
   assert.equal(s.towns.e.supplied, true);
   const full = sim.incomeOf('e');
   sim.command({ type: 'cut', road: 'd|e' });
-  sim.upkeepSupplyVision();
+  sim.refresh();
   assert.equal(s.towns.e.supplied, false);
   assert.equal(sim.incomeOf('e'), full * RULES.cutOffShare);
 });
@@ -185,10 +296,9 @@ test('upgrades raise income and defence and get dearer each level', () => {
   assert.equal(s.towns.c.fort, RULES.maxLevel);
 });
 
-test('newly trained units march to the rally point', () => {
+test('newly trained units march to the rally point and join its garrison', () => {
   const { sim, s } = game();
-  s.towns.d.owner = PLAYER;
-  s.towns.d.garrison = { infantry: 0, vehicle: 0 };
+  give(sim, 'd', PLAYER);
   s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
   assert.deepEqual(sim.command({ type: 'rally', town: 'c', to: 'a' }), { error: 'a rally point must be another town you hold' });
   sim.command({ type: 'rally', town: 'c', to: 'd' });
@@ -196,37 +306,36 @@ test('newly trained units march to the rally point', () => {
   run(sim, RULES.units.infantry.time + 60);
   assert.equal(s.towns.c.garrison.infantry, 0);
   assert.equal(s.towns.d.garrison.infantry, 1);
+  assert.equal(s.armies.length, 0);
 });
 
-test('a group on the road can be recalled', () => {
+test('an army on the road can be recalled', () => {
   const { sim, s } = game();
   s.towns.c.garrison.infantry = 30;
   sim.command({ type: 'move', from: 'c', to: 'd', infantry: 30 });
   run(sim, 5);
-  assert.deepEqual(sim.command({ type: 'redirect', group: s.groups[0].id }), { ok: true });
+  assert.deepEqual(sim.command({ type: 'redirect', army: s.armies[0].id }), { ok: true });
   run(sim, 10);
-  assert.equal(s.groups.length, 0);
-  assert.equal(s.towns.c.garrison.infantry, 30);
+  assert.equal(s.armies[0].at, 'c');
+  assert.equal(s.armies[0].infantry, 30);
   assert.equal(s.towns.d.owner, NEUTRAL);
 });
 
-test('hostile groups that meet on a road fight', () => {
+test('hostile armies that meet on a road fight, and the loser falls back', () => {
   const { sim, s } = game(true);
-  const rival = sim.faction(RIVAL);
-  const home = rival.capital;
-  s.towns.c.garrison.infantry = 20;
-  s.towns[home].garrison.infantry = 5;
-  // Clear the way so the two groups walk straight at each other.
-  for (const id of ['a', 'b', 'd', 'e']) if (id !== home) { s.towns[id].owner = PLAYER; s.towns[id].garrison = { infantry: 0, vehicle: 0 }; }
-  const near = home === 'a' ? 'b' : 'd';
-  sim.command({ type: 'move', from: 'c', to: near, infantry: 20 });
-  run(sim, 60);
+  const home = sim.faction(RIVAL).capital, near = home === 'a' ? 'b' : 'd';
+  give(sim, near, PLAYER, 20);
+  s.towns[home].garrison.infantry = 8;
   sim.command({ type: 'move', from: near, to: home, infantry: 20 });
-  sim.command({ type: 'move', from: home, to: near, infantry: 5 }, RIVAL);
+  sim.command({ type: 'move', from: home, to: near, infantry: 8 }, RIVAL);
   run(sim, 30);
-  assert.equal(s.groups.filter((g) => g.owner === RIVAL).length, 0);
-  assert.equal(s.groups.filter((g) => g.owner === PLAYER).length, 1);
-  assert.ok(s.groups[0].infantry < 20);
+  const theirs = armiesOf(sim, RIVAL), mine = armiesOf(sim, PLAYER);
+  assert.equal(mine.length, 1);
+  assert.ok(mine[0].infantry < 20);
+  assert.equal(theirs.length, 1);
+  assert.equal(theirs[0].retreating, true);
+  assert.equal(theirs[0].to, home);
+  assert.ok(theirs[0].infantry < 8);
 });
 
 test('fog: unseen towns hide their owner, distant ones their defenders', () => {
@@ -236,6 +345,8 @@ test('fog: unseen towns hide their owner, distant ones their defenders', () => {
   assert.equal(v.towns.d.visible, true);       // 4 km away, inside the 7 km range
   assert.equal(v.towns.a.owner, -1);           // 8 km away and never seen
   assert.equal(v.towns.a.garrison, null);
+  assert.equal(v.towns.a.strength, null);
+  assert.equal(v.towns.d.strength, 4.5);
   assert.equal(v.towns.c.buildings !== undefined, true);
   assert.equal(v.towns.d.buildings, undefined);
 });
@@ -244,8 +355,7 @@ test('taking the rival capital wins; holding most of the map wins', () => {
   const a = game(true);
   const home = a.sim.faction(RIVAL).capital;
   const next = home === 'a' ? 'b' : 'd';
-  a.s.towns[next].owner = PLAYER;
-  a.s.towns[next].garrison = { infantry: 40, vehicle: 0 };
+  give(a.sim, next, PLAYER, 40);
   a.sim.command({ type: 'move', from: next, to: home, infantry: 40 });
   run(a.sim, 60);
   assert.equal(a.s.winner, PLAYER);
@@ -257,12 +367,30 @@ test('taking the rival capital wins; holding most of the map wins', () => {
   assert.equal(b.s.winner, PLAYER); // 3 of 5 towns is 60%
 });
 
-test('the rival builds up and expands on its own', () => {
+test('the rival builds up, expands, and keeps a guard at home', () => {
   const { sim, s } = game(true);
   sim.brain = think;
   const rival = sim.faction(RIVAL);
+  s.towns.c.garrison.infantry = 40; // so the game is not over before it has done anything
   run(sim, 1500);
   const held = s.graph.towns.filter((t) => s.towns[t.id].owner === RIVAL).length;
   assert.ok(s.towns[rival.capital].buildings.barracks?.done);
-  assert.ok(held >= 2 || s.winner !== null, `rival holds ${held} towns`);
+  assert.ok(held >= 2, `rival holds ${held} towns`);
+  assert.ok(s.towns[rival.capital].garrison.infantry >= 3, 'the capital keeps a guard');
+});
+
+test('the rival sends relief to a town of its own under siege', () => {
+  const { sim, s } = game(true);
+  sim.brain = think;
+  const home = sim.faction(RIVAL).capital, near = home === 'a' ? 'b' : 'd';
+  give(sim, near, RIVAL, 2);
+  s.towns[near].fort = 3;
+  s.towns[home].garrison.infantry = 30;
+  s.towns.c.garrison.infantry = 8;
+  sim.command({ type: 'move', from: 'c', to: near, infantry: 8 });
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 2);
+  assert.equal(sim.besiegersOf(near).length, 1);
+  run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 8);
+  assert.equal(sim.besiegersOf(near).length, 0);
+  assert.equal(s.towns[near].owner, RIVAL);
 });

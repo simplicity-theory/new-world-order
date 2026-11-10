@@ -38,7 +38,7 @@ export class Game {
     const row = world.db.prepare('SELECT state FROM game WHERE id = 1').get() as { state: string } | undefined;
     const saved = row ? JSON.parse(row.state) as State : null;
     // Games saved by an earlier version of the rules start again on the same map.
-    const game = new Game(world, saved?.version === 2 ? saved : newState(await Game.graph(world)));
+    const game = new Game(world, saved?.version === 3 ? saved : newState(await Game.graph(world)));
     game.save();
     return game;
   }

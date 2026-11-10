@@ -31,6 +31,15 @@ export const RULES = {
   defenceBonus: { hill: 0.25, river: 0.25, fort: 0.25 },
   /** Losses of the winning side are (loser strength / winner strength) to this power. */
   lossPower: 1.5,
+  /** The losing side keeps this share of its units and retreats: base, plus more the closer the fight was. */
+  retreat: { base: 0.25, close: 0.25 },
+  /**
+   * Seconds an army must besiege a town before its assault: per level of fortification, plus
+   * extra for a town or a city. After a full siege the fortifications no longer count.
+   */
+  siege: { perFort: 25, town: 20, city: 40 },
+  /** A garrison joining a relief force's fight against besiegers adds this share of its attack. */
+  sortie: 0.5,
   /** Town upgrades: up to maxLevel each; a level costs base × (level + 1) × (tier + 1). */
   upgrades: {
     market: { name: 'Market', effect: 'income', perLevel: 0.25, base: 120 },
