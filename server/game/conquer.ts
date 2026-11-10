@@ -229,6 +229,15 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** Write every game in play to disk. Called when the server is asked to stop, so nothing since the last save is lost. */
+export async function saveAll(): Promise<number> {
+  let n = 0;
+  for (const pending of loaded.values()) {
+    try { (await pending).save(); n++; } catch { /* a game that failed to load has nothing to save */ }
+  }
+  return n;
+}
+
 /** Handles the game's own routes. Returns false for anything else (map tiles are served by the shared routes). */
 export async function handleConquer(
   req: IncomingMessage, res: ServerResponse, path: string, method: string, body: () => Promise<Record<string, unknown>>,

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { createWorld, deleteWorld, getWorld, listWorlds, type Side } from './store.ts';
-import { games, handleConquer } from './game/conquer.ts';
+import { games, handleConquer, saveAll } from './game/conquer.ts';
 import { getDemTile, getTile } from './tiles.ts';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -105,3 +105,10 @@ createServer((req, res) => {
     else res.end();
   });
 }).listen(PORT, () => console.log(`new-world running at http://localhost:${PORT}`));
+
+// Stopping the server (Ctrl-C, or a kill) saves any games in play first.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    saveAll().then((n) => { if (n) console.log(`saved ${n} game${n > 1 ? 's' : ''}`); }).finally(() => process.exit(0));
+  });
+}
