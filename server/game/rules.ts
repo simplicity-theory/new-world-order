@@ -24,10 +24,11 @@ export const RULES = {
   },
   /** Speed in km/h by road class. Infantry walk at the same pace anywhere; vehicles want good roads. */
   speed: {
-    infantry: { motorway: 5, primary: 5, secondary: 5, tertiary: 5 },
-    scout: { motorway: 30, primary: 30, secondary: 26, tertiary: 22 },
-    vehicle: { motorway: 70, primary: 50, secondary: 38, tertiary: 24 },
-    artillery: { motorway: 28, primary: 22, secondary: 16, tertiary: 9 },
+    // `rail` is a railway: everything goes by train at the same speed, but only between two towns the same side holds.
+    infantry: { motorway: 5, primary: 5, secondary: 5, tertiary: 5, rail: 60 },
+    scout: { motorway: 30, primary: 30, secondary: 26, tertiary: 22, rail: 60 },
+    vehicle: { motorway: 70, primary: 50, secondary: 38, tertiary: 24, rail: 60 },
+    artillery: { motorway: 28, primary: 22, secondary: 16, tertiary: 9, rail: 60 },
   },
   maxQueue: 20,
   /** A neutral town that has lost defenders gets one back this often (seconds), up to what it started with. */

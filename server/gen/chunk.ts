@@ -171,7 +171,7 @@ export class WorldGen {
       return out.sort((a, b) => a.d - b.d);
     };
     const road = (a: Settlement, b: Settlement, kind: string, ref: string, pts: Pt[]) =>
-      ({ id: `${id(a)}|${id(b)}${kind === 'motorway' ? '|m' : ''}`, a: id(a), b: id(b), kind, ref, pts: pts.map(local), bridges: bridges(pts) });
+      ({ id: `${id(a)}|${id(b)}${kind === 'motorway' ? '|m' : kind === 'rail' ? '|r' : ''}`, a: id(a), b: id(b), kind, ref, pts: pts.map(local), bridges: bridges(pts) });
 
     const roads = settlements.highways(box).filter((h) => inside.has(h.a) && inside.has(h.b))
       .map((h) => road(h.a, h.b, h.kind, h.ref, drawn(h)));
@@ -180,6 +180,10 @@ export class WorldGen {
       if (!inside.has(m.a) || !inside.has(m.b)) continue;
       const la = settlements.incident(m.a).find((h) => h.spur), lb = settlements.incident(m.b).find((h) => h.spur);
       if (la && lb) roads.push(road(m.a, m.b, 'motorway', m.ref, [...drawn(la), ...m.pts.slice(1), ...drawn(lb).reverse().slice(1)]));
+    }
+    // Railways, station to station, for games that let armies travel by train.
+    for (const r of settlements.rails(box)) {
+      if (inside.has(r.a) && inside.has(r.b)) roads.push(road(r.a, r.b, 'rail', '', [[r.a.x, r.a.y], ...this.highway(r), [r.b.x, r.b.y]]));
     }
 
     return {

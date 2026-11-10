@@ -100,7 +100,7 @@ export function think(sim: Sim, f: Faction): void {
     if (!count(force)) continue;
     // An army stops at the first town on its route that it does not hold, so that is the town it must be able to beat.
     const firstStop = (to: string): string => {
-      const leg = sim.route(t.id, to, force)?.legs[0];
+      const leg = sim.route(t.id, to, force, f.id)?.legs[0];
       if (!leg) return to;
       const road = sim.roads.get(leg.road)!;
       return leg.rev ? road.a : road.b;

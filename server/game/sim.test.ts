@@ -298,6 +298,23 @@ test('a base trains infantry and scouts side by side', () => {
   assert.equal(s.towns.c.garrison.scout, 1);
 });
 
+test('armies go by rail between towns their side holds, and not otherwise', () => {
+  const map = graph();
+  map.roads.push({ ...road('a', 'e', -8000, 8000, 'rail'), id: 'a|e|r' });
+  const sim = new Sim(newState(map, false)), s = sim.state;
+  const infantry = { infantry: 5 };
+  give(sim, 'a', PLAYER, 5);
+  assert.deepEqual(sim.route('a', 'e', infantry, PLAYER)!.legs.map((l) => l.road), ['a|b', 'b|c', 'c|d', 'd|e']); // E is not ours: no train
+  give(sim, 'e', PLAYER);
+  const byRail = sim.route('a', 'e', infantry, PLAYER)!;
+  assert.deepEqual(byRail.legs.map((l) => l.road), ['a|e|r']);
+  assert.ok(byRail.time < 20);
+  assert.equal(sim.route('a', 'e', infantry)!.legs.length, 4); // nobody in particular: roads only
+  sim.command({ type: 'move', from: 'a', to: 'e', infantry: 5 });
+  run(sim, 20);
+  assert.equal(s.armies[0].at, 'e');
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

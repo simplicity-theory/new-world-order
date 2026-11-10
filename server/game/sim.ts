@@ -344,7 +344,9 @@ export class Sim {
   }
 
   /** Shortest paths from a town. `through` limits which towns a path may pass beyond. */
-  private search(from: string, to: string | null, weight: (r: Road) => number, through?: (id: string) => boolean) {
+  private search(from: string, to: string | null, weight: (r: Road) => number, through?: (id: string) => boolean, rider?: number) {
+    // Railways carry only the side that holds both ends; with no rider given they are left out.
+    const open = (r: Road) => r.intact && (r.kind !== 'rail' || (rider !== undefined && this.state.towns[r.a].owner === rider && this.state.towns[r.b].owner === rider));
     const dist = new Map<string, number>([[from, 0]]);
     const via = new Map<string, { road: Road; prev: string }>();
     const done = new Set<string>();
@@ -355,7 +357,7 @@ export class Sim {
       done.add(cur);
       if (through && cur !== from && !through(cur)) continue;
       for (const { road, other } of this.links.get(cur) ?? []) {
-        if (!road.intact) continue;
+        if (!open(road)) continue;
         const d = best + weight(road);
         if (d < (dist.get(other) ?? Infinity)) { dist.set(other, d); via.set(other, { road, prev: cur }); }
       }
@@ -373,16 +375,16 @@ export class Sim {
   }
 
   /** Quickest route for these units between two towns, over intact roads; null if there is none. */
-  route(from: string, to: string, units: Units): { legs: Leg[]; time: number } | null {
+  route(from: string, to: string, units: Partial<Units> & { owner?: number }, owner = units.owner): { legs: Leg[]; time: number } | null {
     if (from === to) return { legs: [], time: 0 };
-    const { dist, legsTo } = this.search(from, to, (r) => r.length / speedOn(units, r.kind));
+    const { dist, legsTo } = this.search(from, to, (r) => r.length / speedOn(units, r.kind), undefined, owner);
     return dist.has(to) ? { legs: legsTo(to), time: dist.get(to)! } : null;
   }
 
   /** The quickest way from a town to the nearest town its side holds, passing only through towns it holds. */
   private wayHome(owner: number, from: string, units: Units): { to: string; legs: Leg[]; time: number } | null {
     const mine = (id: string) => this.state.towns[id].owner === owner;
-    const { dist, legsTo } = this.search(from, null, (r) => r.length / speedOn(units, r.kind), mine);
+    const { dist, legsTo } = this.search(from, null, (r) => r.length / speedOn(units, r.kind), mine, owner);
     let best: string | null = null;
     for (const [id, d] of dist) if (id !== from && mine(id) && (best === null || d < dist.get(best)!)) best = id;
     return best ? { to: best, legs: legsTo(best), time: dist.get(best)! } : null;
@@ -432,7 +434,7 @@ export class Sim {
 
   /** Raise an army from a town and send it on its way. */
   private dispatch(owner: number, from: string, to: string, units: Units, settle = false): boolean {
-    const r = this.route(from, to, units);
+    const r = this.route(from, to, units, owner);
     if (!r || !r.legs.length) return false;
     const army = this.raise(owner, units, from, settle ? { settle, name: 'Recruits' } : {});
     this.march(army, r.legs, to);
