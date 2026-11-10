@@ -67,7 +67,11 @@ const roadOf = (id) => game.graph.roads.find((r) => r.id === id);
 const state = (id) => live.towns[id];
 const mine = (id) => state(id)?.owner === PLAYER;
 const faction = (id) => live.factions.find((f) => f.id === id);
-const colorOf = (owner) => faction(owner)?.color ?? '#a3a9b0';
+// An alternative set of side colours that stay distinct with the common kinds of colour blindness.
+const SAFE = { 1: '#0072b2', 2: '#d55e00', 3: '#cc79a7', 4: '#b8860b' };
+let safeColors = false;
+try { safeColors = localStorage.getItem('conquer-colors') === 'safe'; } catch { /* storage unavailable */ }
+const colorOf = (owner) => (safeColors && SAFE[owner]) || (faction(owner)?.color ?? '#a3a9b0');
 const ownerName = (owner) => (owner === PLAYER ? 'yours' : owner === UNKNOWN ? 'unexplored' : faction(owner).name.toLowerCase());
 const cutState = (id) => live.roads.find((r) => r.id === id);
 const army = (id) => live.armies.find((a) => a.id === id);
@@ -828,6 +832,12 @@ let autoPause = true;
 try { autoPause = localStorage.getItem('conquer-autopause') !== 'off'; } catch { /* storage unavailable */ }
 $('autopause').checked = autoPause;
 $('autopause').addEventListener('change', (e) => { autoPause = e.target.checked; try { localStorage.setItem('conquer-autopause', autoPause ? 'on' : 'off'); } catch { /* fine */ } });
+$('safe-colors').checked = safeColors;
+$('safe-colors').addEventListener('change', (e) => {
+  safeColors = e.target.checked;
+  try { localStorage.setItem('conquer-colors', safeColors ? 'safe' : 'default'); } catch { /* fine */ }
+  drawStatic(true); drawLand(); drawBadges(); drawMini(); pathsKey = ''; drawPaths(); renderUi(true);
+});
 let hintsOff = false;
 try { hintsOff = localStorage.getItem('conquer-hints') === 'off'; } catch { /* storage unavailable */ }
 function drawHint() {
@@ -1353,11 +1363,13 @@ document.addEventListener('keydown', (e) => {
     command({ type: 'speed', value: SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, at + (k === '-' ? -1 : 1)))] });
   } else if (k === 'Tab') {
     e.preventDefault();
-    const idle = game.graph.towns.filter((t) => mine(t.id) && total(state(t.id).garrison));
-    if (!idle.length) return toast('No town of yours has units waiting');
-    const at = idle.findIndex((t) => t.id === selTowns[0]);
+    // Round every place with units of yours waiting for orders: towns with a garrison, then camped armies.
+    const idle = [...game.graph.towns.filter((t) => mine(t.id) && total(state(t.id).garrison)).map((t) => ({ pick: { towns: [t.id] }, x: t.x, y: t.y, is: selTowns[0] === t.id })),
+      ...live.armies.filter(camped).map((a) => ({ pick: { army: a.id }, x: town(a.at).x, y: town(a.at).y, is: selArmy === a.id }))];
+    if (!idle.length) return toast('Nothing of yours is waiting for orders');
+    const at = idle.findIndex((i) => i.is);
     const next = idle[(at + (e.shiftKey ? idle.length - 1 : 1)) % idle.length];
-    select({ towns: [next.id] });
+    select(next.pick);
     goTo(next.x, next.y);
   } else if (k === 'h' || k === 'H') {
     const c = town(live.me.capital);
@@ -1366,6 +1378,10 @@ document.addEventListener('keydown', (e) => {
     if (lastPlace) goTo(lastPlace[0], lastPlace[1]); else toast('Nothing has happened yet');
   } else if ((k === 'o' || k === 'O') && !$('cmd').querySelector('[data-key="o"]')) {
     openSheet(sheetTab ? null : 'economy');
+  } else if ((k === 'z' || k === 'Z') && !$('cmd').querySelector('[data-key="z"]')) {
+    // Step back to see the whole map.
+    const b = game.world.boundsM;
+    map.fitBounds([toLngLat(b.minx, b.miny), toLngLat(b.maxx, b.maxy)], { duration: 500, padding: { top: 70, bottom: 130, left: 20, right: 20 } });
   } else if (k === 'l' || k === 'L') {
     $('toggle-roads').click();
   } else if (k === '?') {
