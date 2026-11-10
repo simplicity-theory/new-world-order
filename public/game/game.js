@@ -641,6 +641,73 @@ $('log-toggle').addEventListener('click', () => {
   $('events').scrollTop = $('events').scrollHeight;
 });
 
+// ----- Overview sheet -----
+// The whole economy and every army in two sortable tables. Click a row to go there.
+
+let sheetTab = null;                     // 'economy', 'armies', or null when closed
+const sheetSort = { economy: ['income', -1], armies: ['units', -1] };
+const upkeepOf = (u) => game.unitKinds.reduce((n, k) => n + (u?.[k] || 0) * game.rules.units[k].upkeep, 0);
+
+function sheetTable(tab, cols, rows, foot = '') {
+  const [by, dir] = sheetSort[tab];
+  const col = cols.find((c) => c.key === by) ?? cols[0];
+  const sorted = [...rows].sort((a, b) => (typeof a[col.key] === 'number' ? a[col.key] - b[col.key] : String(a[col.key]).localeCompare(String(b[col.key]))) * dir);
+  return `<table><thead><tr>${cols.map((c) => `<th data-sort="${c.key}" class="${c.num ? 'num' : ''}" ${c.key === by ? `data-dir="${dir}"` : ''}>${c.label}</th>`).join('')}</tr></thead>
+    <tbody>${sorted.map((r) => `<tr data-pick='${JSON.stringify(r.pick)}'>${cols.map((c) => `<td class="${c.num ? 'num' : ''}">${c.show ? c.show(r) : r[c.key]}</td>`).join('')}</tr>`).join('')}</tbody>${foot}</table>`;
+}
+
+function sheetHtml() {
+  const own = game.graph.towns.filter((t) => mine(t.id));
+  if (sheetTab === 'economy') {
+    const rows = own.map((t) => {
+      const s = state(t.id);
+      const tags = [live.me.capital === t.id && '<span class="tag">capital</span>', s.market && `<span class="tag good">market ${s.market}</span>`, t.traits.port && '<span class="tag good">port</span>',
+        t.traits.rail && '<span class="tag good">railway</span>', !s.supplied && '<span class="tag bad">cut off</span>', s.besieged && '<span class="tag bad">besieged</span>'].filter(Boolean).join('');
+      return { x: t.x, y: t.y, pick: { towns: [t.id] }, name: t.name, size: t.tier, income: Math.round(s.income), upkeep: upkeepOf(s.garrison), net: Math.round(s.income) - upkeepOf(s.garrison), tags };
+    });
+    const armyUpkeep = live.armies.filter(myArmy).reduce((n, a) => n + upkeepOf(a), 0);
+    const cols = [{ key: 'name', label: 'Town' }, { key: 'size', label: 'Size', show: (r) => TIERS[r.size] }, { key: 'tags', label: '', show: (r) => r.tags },
+      { key: 'income', label: 'Income', num: true }, { key: 'upkeep', label: 'Garrison upkeep', num: true }, { key: 'net', label: 'Net', num: true }];
+    const income = rows.reduce((n, r) => n + r.income, 0), upkeep = rows.reduce((n, r) => n + r.upkeep, 0);
+    return sheetTable('economy', cols, rows, `<tfoot><tr><td colspan="3">Armies in the field</td><td class="num"></td><td class="num">${armyUpkeep}</td><td class="num">−${armyUpkeep}</td></tr>
+      <tr><td colspan="3">Total a minute</td><td class="num">${income}</td><td class="num">${upkeep + armyUpkeep}</td><td class="num">${income - upkeep - armyUpkeep}</td></tr></tfoot>`);
+  }
+  const status = (a) => (a.siege ? `besieging ${town(a.at).name} (${Math.round(10 * a.siege.progress / a.siege.need) * 10}%)` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`);
+  const armies = live.armies.filter(myArmy).map((a) => { return { pick: { army: a.id }, name: a.name, units: a.infantry + a.vehicle, infantry: a.infantry, vehicle: a.vehicle, strength: attackPower(a), status: status(a), upkeep: upkeepOf(a) }; });
+  const garrisons = own.filter((t) => total(state(t.id).garrison)).map((t) => { const g = state(t.id).garrison; return { x: t.x, y: t.y, pick: { towns: [t.id] }, name: t.name, units: total(g), infantry: g.infantry, vehicle: g.vehicle, strength: attackPower(g), status: 'garrison', upkeep: upkeepOf(g) }; });
+  const cols = [{ key: 'name', label: 'Name' }, { key: 'status', label: 'Doing' }, { key: 'infantry', label: 'Infantry', num: true }, { key: 'vehicle', label: 'Vehicles', num: true },
+    { key: 'units', label: 'Units', num: true }, { key: 'strength', label: 'Attack', num: true }, { key: 'upkeep', label: 'Upkeep', num: true }];
+  return `<h3>Armies</h3>${armies.length ? sheetTable('armies', cols, armies) : '<p class="hint">No armies yet. Send units out of a town, or muster them, to form one.</p>'}
+    <h3>Garrisons</h3>${garrisons.length ? sheetTable('armies', cols, garrisons) : '<p class="hint">No town of yours has units in it.</p>'}`;
+}
+
+let sheetKey = '';
+function drawSheet(force) {
+  $('sheet').style.display = sheetTab ? 'flex' : 'none';
+  if (!sheetTab) return;
+  const html = sheetHtml();
+  if (!force && html === sheetKey) return;
+  sheetKey = html;
+  $('sheet-body').innerHTML = html;
+  for (const b of $('sheet').querySelectorAll('[data-tab]')) b.classList.toggle('on', b.dataset.tab === sheetTab);
+}
+function openSheet(tab) { sheetTab = tab; drawSheet(true); }
+$('open-sheet').addEventListener('click', () => openSheet(sheetTab ? null : 'economy'));
+$('close-sheet').addEventListener('click', () => openSheet(null));
+$('sheet').addEventListener('click', (e) => {
+  const tab = e.target.closest('[data-tab]'), th = e.target.closest('th[data-sort]'), row = e.target.closest('tr[data-pick]');
+  if (tab) return openSheet(tab.dataset.tab);
+  if (th) { const s = sheetSort[sheetTab]; sheetSort[sheetTab] = [th.dataset.sort, s[0] === th.dataset.sort ? -s[1] : -1]; return drawSheet(true); }
+  if (row) {
+    // Go to wherever the town or army is now, and select it.
+    const pick = JSON.parse(row.dataset.pick), a = pick.army !== undefined ? army(pick.army) : null;
+    const [x, y] = a ? armyPoint(a) : [town(pick.towns[0]).x, town(pick.towns[0]).y];
+    select(pick);
+    goTo(x, y);
+    openSheet(null);
+  }
+});
+
 // ----- Alerts -----
 // What needs attention right now, as a column of buttons. Click one to go to the next place it is about.
 
@@ -1058,7 +1125,8 @@ document.addEventListener('keydown', (e) => {
   if (!game || !live || e.target.matches('input, select, textarea')) return;
   const k = e.key;
   if (k === 'Escape') {
-    if ($('help').style.display === 'block') $('help').style.display = 'none';
+    if (sheetTab) openSheet(null);
+    else if ($('help').style.display === 'block') $('help').style.display = 'none';
     else if (mode) { mode = null; renderUi(true); } else select({});
     return;
   }
@@ -1102,6 +1170,8 @@ document.addEventListener('keydown', (e) => {
     if (c) { select({ towns: [c.id] }); goTo(c.x, c.y); }
   } else if (k === 'j' || k === 'J') {
     if (lastPlace) goTo(lastPlace[0], lastPlace[1]); else toast('Nothing has happened yet');
+  } else if ((k === 'o' || k === 'O') && !$('cmd').querySelector('[data-key="o"]')) {
+    openSheet(sheetTab ? null : 'economy');
   } else if (k === '?') {
     $('keys').click();
   } else {
@@ -1124,6 +1194,7 @@ function onTick(data) {
   drawAlerts();
   drawPaths();
   drawMini();
+  drawSheet();
   renderUi();
 }
 
