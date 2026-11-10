@@ -1014,6 +1014,7 @@ export class Sim {
       roads: s.graph.roads.filter((r) => !r.intact).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
       events: s.events.filter((e) => e.to === who).slice(-40),
       winner: s.winner, dismissed: s.dismissed, settings: s.settings,
+      record: s.tally[who] ?? { won: 0, lost: 0, casualties: 0 },
       // The record is only sent once the game is decided, when it is no longer a secret.
       summary: s.winner !== null ? { history: [...s.history, { clock: Math.round(s.clock), held: this.heldNow() }], tally: s.tally } : null,
       goal: Math.ceil(s.graph.towns.length * RULES.winShare),
