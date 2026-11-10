@@ -44,7 +44,7 @@ export function territory(graph: Graph, owners: Record<string, number>, b: Exten
   }
   for (const r of graph.roads) {
     const o = owners[r.a];
-    if (!(o > 0) || owners[r.b] !== o || !r.intact) continue;
+    if (!(o > 0) || owners[r.b] !== o || !r.intact || r.kind === 'sea') continue;
     const step = Math.max(1, Math.floor(r.pts.length / 40));
     for (let k = 0; k < r.pts.length - 1; k += step) {
       const q = r.pts[Math.min(r.pts.length - 1, k + step)];

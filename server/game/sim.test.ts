@@ -314,6 +314,12 @@ test('armies go by rail between towns their side holds, and not otherwise', () =
   sim.command({ type: 'move', from: 'a', to: 'e', infantry: 5 });
   run(sim, 20);
   assert.equal(s.armies[0].at, 'e');
+  // A sea crossing follows the same rule, and cannot be cut.
+  map.roads.push({ ...road('a', 'c', -8000, 0, 'sea'), id: 'a|c|s' });
+  const sea = new Sim(newState(map, false));
+  give(sea, 'a', PLAYER, 3);
+  assert.deepEqual(sea.route('a', 'c', infantry, PLAYER)!.legs.map((l) => l.road), ['a|c|s']);
+  assert.deepEqual(sea.command({ type: 'cut', road: 'a|c|s' }), { error: 'a sea crossing cannot be cut' });
 });
 
 test('a neutral town next door can be bought instead of fought', () => {

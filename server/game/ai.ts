@@ -50,7 +50,14 @@ export function think(sim: Sim, f: Faction): void {
     if (s.towns[t.id].market < RULES.maxLevel && f.money >= sim.upgradeCost(t.id, 'market') + 150) { act({ type: 'upgrade', town: t.id, upgrade: 'market' }); break; }
   }
 
-  const frontier = (id: string) => (sim.links.get(id) ?? []).filter((l) => l.road.intact && s.towns[l.other].owner !== f.id);
+  // A neutral town next door is bought when that is affordable with plenty to spare: cheaper than the men it would cost.
+  for (const t of mine) {
+    for (const l of sim.links.get(t.id) ?? []) {
+      if (l.road.intact && s.towns[l.other].owner === 0 && inSight.has(l.other) && !sim.besiegersOf(l.other).length && f.money >= sim.bribeCost(l.other) * 1.4 + 100) act({ type: 'bribe', town: l.other });
+    }
+  }
+
+  const frontier = (id: string) => (sim.links.get(id) ?? []).filter((l) => l.road.intact && l.road.kind !== 'rail' && l.road.kind !== 'sea' && s.towns[l.other].owner !== f.id);
   /** What a town can spare: everything but a guard, which border towns and the capital always keep. */
   const spare = (id: string): Units => {
     const g = s.towns[id].garrison;

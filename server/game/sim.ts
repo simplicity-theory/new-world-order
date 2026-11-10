@@ -351,7 +351,7 @@ export class Sim {
   /** Shortest paths from a town. `through` limits which towns a path may pass beyond. */
   private search(from: string, to: string | null, weight: (r: Road) => number, through?: (id: string) => boolean, rider?: number) {
     // Railways carry only the side that holds both ends; with no rider given they are left out.
-    const open = (r: Road) => r.intact && (r.kind !== 'rail' || (rider !== undefined && this.state.towns[r.a].owner === rider && this.state.towns[r.b].owner === rider));
+    const open = (r: Road) => r.intact && ((r.kind !== 'rail' && r.kind !== 'sea') || (rider !== undefined && this.state.towns[r.a].owner === rider && this.state.towns[r.b].owner === rider));
     const dist = new Map<string, number>([[from, 0]]);
     const via = new Map<string, { road: Road; prev: string }>();
     const done = new Set<string>();
@@ -952,6 +952,7 @@ export class Sim {
         const road = this.roads.get(String(c.road));
         if (!road) return fail('unknown road');
         if (s.towns[road.a].owner !== who && s.towns[road.b].owner !== who) return fail('you must hold a town at one end of the road');
+        if (road.kind === 'sea') return fail('a sea crossing cannot be cut');
         const bridge = road.bridges.length > 0;
         if (c.type === 'cut') {
           if (!road.intact) return fail('already cut');

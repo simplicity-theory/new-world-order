@@ -110,7 +110,7 @@ function route(from, to, units) {
     done.add(cur);
     for (const r of game.graph.roads) {
       if (cutState(r.id) || (r.a !== cur && r.b !== cur)) continue;
-      if (r.kind === 'rail' && !(mine(r.a) && mine(r.b))) continue;   // trains run only between towns you hold
+      if ((r.kind === 'rail' || r.kind === 'sea') && !(mine(r.a) && mine(r.b))) continue;   // trains and ships run only between towns you hold
       const other = r.a === cur ? r.b : r.a, d = best + r.length / speedOn(units, r.kind);
       if (d < (dist.get(other) ?? Infinity)) { dist.set(other, d); via.set(other, { r, prev: cur }); }
     }
@@ -213,7 +213,7 @@ function addOverlay() {
       'line-opacity': ['case', ['==', ['get', 'known'], 1], 0.95, 0.5] } });
   // The whole road network, coloured by class, for when the player asks to see it.
   map.addLayer({ id: 'cq-road-all', type: 'line', source: 'cq-roads', layout: { visibility: 'none', 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': ['match', ['get', 'kind'], 'motorway', '#c0392b', 'primary', '#e67e22', 'secondary', '#d4ac0d', 'rail', '#1f2933', '#6b7785'],
+    paint: { 'line-color': ['match', ['get', 'kind'], 'motorway', '#c0392b', 'primary', '#e67e22', 'secondary', '#d4ac0d', 'rail', '#1f2933', 'sea', '#1f6f9e', '#6b7785'],
       'line-width': ['match', ['get', 'kind'], 'motorway', 5, 'primary', 4, 'secondary', 3, 2.2], 'line-opacity': 0.85 } });
   map.addLayer({ id: 'cq-bridges', type: 'circle', source: 'cq-bridges', layout: { visibility: 'none' },
     paint: { 'circle-radius': 4.5, 'circle-color': '#ffffff', 'circle-stroke-color': '#1f2933', 'circle-stroke-width': 2 } });
@@ -1105,14 +1105,14 @@ function cmdHtml() {
     const r = roadOf(selRoad), c = cutState(r.id), bridge = r.bridges.length > 0, k = rules.roads, can = mine(r.a) || mine(r.b);
     const cutCost = bridge ? k.cutBridge : k.cut, fixCost = bridge ? k.repairBridge : k.repair;
     const status = c ? (c.repair >= 0 ? 'Being repaired' : 'Cut — nobody can use it') : 'Open';
-    const rail = r.kind === 'rail';
-    return who(rail ? 'Railway' : r.ref || 'Road', `${esc(town(r.a).name)} – ${esc(town(r.b).name)}`, 0,
-      chip(rail ? UI.rail : UI.road, `${(r.length / 1000).toFixed(1)} km`, rail ? 'Railway: armies travel it at train speed, but only while you hold both ends' : `${r.kind} road${bridge ? ' with a bridge' : ''}`)
+    const rail = r.kind === 'rail' || r.kind === 'sea', sea = r.kind === 'sea';
+    return who(sea ? 'Sea crossing' : rail ? 'Railway' : r.ref || 'Road', `${esc(town(r.a).name)} – ${esc(town(r.b).name)}`, 0,
+      chip(rail ? UI.rail : UI.road, `${(r.length / 1000).toFixed(1)} km`, sea ? 'Sea crossing between two ports: usable only while you hold both, and it cannot be cut' : rail ? 'Railway: armies travel it at train speed, but only while you hold both ends' : `${r.kind} road${bridge ? ' with a bridge' : ''}`)
       + chip(UI.vehicle, `${rules.speed.vehicle[r.kind] ?? rules.speed.vehicle.tertiary}`, rail ? 'Train speed, km/h, for every kind of unit' : 'Vehicle speed here, km/h'))
       + `<div class="mid"><div class="tray empty">${status}</div><div class="tip">${can ? 'A cut road isolates the towns beyond it; cut off from their capital they earn half' : 'Hold a town at one end to cut or repair this road'}</div></div>
       <div class="slots">${c
         ? slot({ key: 'e', icon: UI.repair, does: `repair:${r.id}`, price: fixCost, caption: '', disabled: !can || c.repair >= 0 || cash < fixCost, title: 'Repair the road' })
-        : slot({ key: 'c', icon: UI.cut, does: `cut:${r.id}`, price: cutCost, caption: '', disabled: !can || cash < cutCost, title: bridge ? 'Blow the bridge: cheap to do, slow and costly to mend' : 'Cut the road' })}</div>`;
+        : sea ? '' : slot({ key: 'c', icon: UI.cut, does: `cut:${r.id}`, price: cutCost, caption: '', disabled: !can || cash < cutCost, title: bridge ? 'Blow the bridge: cheap to do, slow and costly to mend' : 'Cut the road' })}</div>`;
   }
   if (selTowns.length > 1) {
     const sum = Object.fromEntries(game.unitKinds.map((k) => [k, selTowns.reduce((n, id) => n + (state(id).garrison?.[k] ?? 0), 0)]));
@@ -1176,9 +1176,10 @@ function roadRows(roads, from) {
     const c = cutState(r.id), bridge = r.bridges.length > 0, k = game.rules.roads, cash = live.me.money;
     let action = '';
     if (c?.repair >= 0) action = '<span>being repaired</span>';
+    else if (r.kind === 'sea') action = '';
     else if (c) action = `<button data-do="repair:${r.id}" ${cash < (bridge ? k.repairBridge : k.repair) ? 'disabled' : ''}>Repair<span class="cost">${bridge ? k.repairBridge : k.repair}</span></button>`;
     else action = `<button data-do="cut:${r.id}" ${cash < (bridge ? k.cutBridge : k.cut) ? 'disabled' : ''}>Cut<span class="cost">${bridge ? k.cutBridge : k.cut}</span></button>`;
-    return `<div class="row road"><span style="flex:1">${r.kind === 'rail' ? 'Railway' : r.ref || r.kind[0].toUpperCase() + r.kind.slice(1)} to ${esc(town(r.a === from ? r.b : r.a).name)}<br><span class="hint">${(r.length / 1000).toFixed(1)} km${bridge ? ', bridge' : ''}</span></span>${action}</div>`;
+    return `<div class="row road"><span style="flex:1">${r.kind === 'sea' ? 'Sea crossing' : r.kind === 'rail' ? 'Railway' : r.ref || r.kind[0].toUpperCase() + r.kind.slice(1)} to ${esc(town(r.a === from ? r.b : r.a).name)}<br><span class="hint">${(r.length / 1000).toFixed(1)} km${bridge ? ', bridge' : ''}</span></span>${action}</div>`;
   }).join('');
 }
 

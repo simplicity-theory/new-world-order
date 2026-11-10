@@ -181,6 +181,31 @@ export class WorldGen {
       const la = settlements.incident(m.a).find((h) => h.spur), lb = settlements.incident(m.b).find((h) => h.spur);
       if (la && lb) roads.push(road(m.a, m.b, 'motorway', m.ref, [...drawn(la), ...m.pts.slice(1), ...drawn(lb).reverse().slice(1)]));
     }
+    // Sea lanes between ports no more than 18 km apart whose straight crossing is mostly open water.
+    const ports = towns.map((s) => {
+      // The nearest bit of sea to the town, if any: where its ships would put out from.
+      for (let d = s.r * 0.4; d < s.r * 1.2 + 200; d += 60) {
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2, x = s.x + Math.cos(a) * d, y = s.y + Math.sin(a) * d;
+          if (terrain.elev(x, y) < -0.5) return { s, quay: [x, y] as Pt };
+        }
+      }
+      return null;
+    }).filter((p) => p !== null);
+    for (let i = 0; i < ports.length; i++) {
+      for (let j = i + 1; j < ports.length; j++) {
+        const p = ports[i], q = ports[j];
+        const span = Math.hypot(q.quay[0] - p.quay[0], q.quay[1] - p.quay[1]);
+        if (span > 18000 || span < 1500) continue;
+        let wet = 0;
+        const n = Math.ceil(span / 150);
+        for (let k = 0; k <= n; k++) if (terrain.elev(p.quay[0] + ((q.quay[0] - p.quay[0]) * k) / n, p.quay[1] + ((q.quay[1] - p.quay[1]) * k) / n) < 0) wet++;
+        if (wet / (n + 1) < 0.9) continue;
+        const [a, b] = p.s.rank < q.s.rank ? [p, q] : [q, p];
+        roads.push({ id: `${id(a.s)}|${id(b.s)}|s`, a: id(a.s), b: id(b.s), kind: 'sea', ref: '', pts: ([[a.s.x, a.s.y], a.quay, b.quay, [b.s.x, b.s.y]] as Pt[]).map(local), bridges: [] });
+      }
+    }
+
     // Railways, station to station, for games that let armies travel by train.
     for (const r of settlements.rails(box)) {
       if (inside.has(r.a) && inside.has(r.b)) roads.push(road(r.a, r.b, 'rail', '', [[r.a.x, r.a.y], ...this.highway(r), [r.b.x, r.b.y]]));
