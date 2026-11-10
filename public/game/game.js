@@ -1460,6 +1460,10 @@ document.addEventListener('keydown', (e) => {
     // Step back to see the whole map.
     const b = game.world.boundsM;
     map.fitBounds([toLngLat(b.minx, b.miny), toLngLat(b.maxx, b.maxy)], { duration: 500, padding: { top: 70, bottom: 130, left: 20, right: 20 } });
+  } else if (k.startsWith('Arrow')) {
+    e.preventDefault();
+    const step = e.shiftKey ? 320 : 140, d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[k];
+    map.panBy(d, { duration: 120 });
   } else if (k === 'l' || k === 'L') {
     $('toggle-roads').click();
   } else if (k === '?') {
@@ -1546,7 +1550,7 @@ $('setup-cancel').addEventListener('click', () => { $('setup').style.display = '
 $('setup').querySelector('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
-  const body = { name: form.get('name'), seed: form.get('seed') || undefined, size: form.get('size'), rivals: Number(form.get('rivals')), difficulty: form.get('difficulty'), watch: form.get('watch') === 'on' };
+  const body = { name: form.get('name'), seed: form.get('seed') || undefined, size: form.get('size'), rivals: Number(form.get('rivals')), difficulty: form.get('difficulty'), watch: form.get('watch') === 'on', reveal: form.get('reveal') === 'on' };
   $('setup').style.display = 'none';
   veil('Generating the map…');
   try {
@@ -1594,7 +1598,15 @@ $('delete').addEventListener('click', async () => {
 });
 
 const list = await refreshList();
-const wanted = new URLSearchParams(location.search).get('game');
+const query = new URLSearchParams(location.search);
+const wanted = query.get('game');
+// Arriving from the map explorer with a seed: offer a new game on that world.
+if (query.get('seed')) {
+  const form = $('setup').querySelector('form');
+  form.elements.seed.value = query.get('seed');
+  form.elements.name.value = query.get('name') || 'Campaign';
+  newGame();
+}
 if (list.length) {
   const id = list.some((w) => w.id === wanted) ? wanted : list[0].id;
   $('games').value = id;

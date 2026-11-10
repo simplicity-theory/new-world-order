@@ -91,7 +91,7 @@ export type UpgradeKind = keyof typeof RULES.upgrades;
 export type RoadKind = keyof typeof RULES.speed.vehicle;
 export type Difficulty = keyof typeof RULES.difficulty;
 export type MapSize = keyof typeof RULES.sizes;
-export interface Settings { rivals: number; difficulty: Difficulty; size: MapSize; /** The computer plays the player's side too, to watch. */ watch?: boolean }
+export interface Settings { rivals: number; difficulty: Difficulty; size: MapSize; /** The computer plays the player's side too, to watch. */ watch?: boolean; /** The player sees the whole map: no fog of war. */ reveal?: boolean }
 export const DEFAULTS: Settings = { rivals: 1, difficulty: 'normal', size: 'medium', watch: false };
 export const NEUTRAL = 0;
 export const PLAYER = 1;

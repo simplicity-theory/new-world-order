@@ -504,6 +504,13 @@ test('fog: unseen towns hide their owner, distant ones their defenders', () => {
   assert.equal(v.towns.d.buildings, undefined);
 });
 
+test('with fog of war off, the player sees every town', () => {
+  const sim = new Sim(newState(graph(), { rivals: 1, reveal: true }));
+  const v = sim.view(PLAYER) as any;
+  assert.ok(Object.values(v.towns).every((t: any) => t.visible && t.owner >= 0 && t.garrison));
+  assert.equal(sim.visible(RIVAL).has('c'), false, 'the rival still plays by fog');
+});
+
 test('taking the rival capital wins; holding most of the map wins', () => {
   const a = game(true);
   const home = a.sim.faction(RIVAL).capital;

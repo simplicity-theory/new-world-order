@@ -77,6 +77,7 @@ export function sight(eyes: [number, number, number][], b: Extent): Pt[][] {
   const n = Math.ceil(Math.max(b.maxx - b.minx, b.maxy - b.miny) / CELL) + 1;
   const f = new Float32Array(n * n).fill(-1);
   for (const [ex, ey, r] of eyes) {
+    if (r > 1e6) { for (let j = 1; j < n - 1; j++) for (let i = 1; i < n - 1; i++) if (b.minx + i * CELL < b.maxx && b.miny + j * CELL < b.maxy) f[j * n + i] = 1; continue; }
     const i0 = Math.max(1, Math.floor((ex - r - b.minx) / CELL)), i1 = Math.min(n - 2, Math.ceil((ex + r - b.minx) / CELL));
     const j0 = Math.max(1, Math.floor((ey - r - b.miny) / CELL)), j1 = Math.min(n - 2, Math.ceil((ey + r - b.miny) / CELL));
     for (let j = j0; j <= j1; j++) {

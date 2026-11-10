@@ -333,6 +333,8 @@ export class Sim {
   /** Everything a faction sees from, as [x, y, range]: the towns it holds and its armies. */
   eyes(who: number): [number, number, number][] {
     const eyes: [number, number, number][] = [];
+    // With fog of war switched off, the player sees everything from everywhere.
+    if (who === PLAYER && this.state.settings?.reveal) return [[0, 0, 1e8]];
     for (const t of this.state.graph.towns) if (this.state.towns[t.id].owner === who) eyes.push([t.x, t.y, RULES.vision.town + t.r]);
     // An army sees as far as its longest-sighted units; scouts see a long way.
     for (const a of this.state.armies) {
