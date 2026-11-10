@@ -858,6 +858,7 @@ function miniScale() {
   return { k, to: (x, y) => [ox + (x - b.minx) * k, c.height - oy - (y - b.miny) * k], from: (px, py) => [b.minx + (px - ox) / k, b.miny + (c.height - oy - py) / k] };
 }
 
+let miniPicture = null;   // the terrain picture behind the minimap, and which map it is of
 function drawMini() {
   if (!game || !live || !map) return;
   const c = $('mini'), g = c.getContext('2d'), { k, to } = miniScale(), b = game.world.boundsM;
@@ -865,6 +866,21 @@ function drawMini() {
   g.fillStyle = '#e6e9dc';
   const [x0, y1] = to(b.minx, b.miny), [x1, y0] = to(b.maxx, b.maxy);
   g.fillRect(x0, y0, x1 - x0, y1 - y0);
+  const want = `/api/conquer/${game.world.id}/mini?v=${game.world.version}`;
+  if (miniPicture?.src !== want) {
+    const img = new Image();
+    img.onload = () => { if (miniPicture?.img === img) { miniPicture.ready = true; drawMini(); } };
+    img.src = want;
+    miniPicture = { src: want, img, ready: false };
+  }
+  if (miniPicture.ready) {
+    // The picture is a square from the south-west corner; only the part inside the map is shown.
+    const side = Math.max(b.maxx - b.minx, b.maxy - b.miny) * k;
+    g.save();
+    g.beginPath(); g.rect(x0, y0, x1 - x0, y1 - y0); g.clip();
+    g.drawImage(miniPicture.img, x0, y1 - side, side, side);
+    g.restore();
+  }
   for (const p of land) {
     g.fillStyle = `${colorOf(p.owner)}66`;
     g.beginPath();

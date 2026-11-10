@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { CHUNK } from '../gen/chunk.ts';
 import { run } from '../pool.ts';
 import { Store, type Side, type World } from '../store.ts';
+import { encodePng } from '../tiles.ts';
 import { think } from './ai.ts';
 import { DEFAULTS, PLAYER, RULES, type Settings } from './rules.ts';
 import { Sim, UNIT_KINDS, mergeGraph, newBuilding, newState, type RawGraph, type State, type TownNode } from './sim.ts';
@@ -26,6 +27,7 @@ export class Game {
   private landKey = '';
   private land: Territory[] = [];
   private sightKey = '';
+  private mini: { key: string; png: Promise<Buffer> } | null = null;
   private ticks = 0;
 
   private constructor(world: World, state: State) {
@@ -120,6 +122,32 @@ export class Game {
       return this.land;
     }
     return this.land;
+  }
+
+  /**
+   * A small picture of the whole map for the minimap: sea, land and a little shading for height.
+   * It covers a square from the map's south-west corner, as wide as the map's longer side.
+   */
+  miniMap(): Promise<Buffer> {
+    const b = this.world.info().boundsM, key = JSON.stringify(b);
+    if (this.mini?.key === key) return this.mini.png;
+    const size = 220, side = Math.max(b.maxx - b.minx, b.maxy - b.miny), step = side / size;
+    const [ox, oy] = this.world.meta.origin;
+    const png = run({ type: 'dem', seed: this.world.seedNumber, origin: this.world.meta.origin, size, step, carve: false, x0: ox + b.minx + step / 2, y0: oy + b.miny + step / 2 })
+      .then((r: { grid: Float32Array }) => {
+        const rgb = new Uint8Array(size * size * 3);
+        for (let row = 0; row < size; row++) {
+          for (let col = 0; col < size; col++) {
+            const e = r.grid[(size - 1 - row) * size + col], o = (row * size + col) * 3;
+            // Sea deepens away from the shore; land darkens gently with height.
+            const c = e < 0 ? [165 - Math.min(30, -e), 207 - Math.min(25, -e * 0.8), 238] : [232 - Math.min(60, e * 0.22), 235 - Math.min(50, e * 0.17), 220 - Math.min(70, e * 0.26)];
+            rgb[o] = c[0]; rgb[o + 1] = c[1]; rgb[o + 2] = c[2];
+          }
+        }
+        return encodePng(size, size, rgb);
+      });
+    this.mini = { key, png };
+    return png;
   }
 
   /** The area the player can see right now, or null if it has not changed since it was last asked for. */
@@ -225,7 +253,7 @@ export async function handleConquer(
     json(res, 201, game.full());
     return true;
   }
-  const m = path.match(/^\/api\/conquer\/([a-z0-9-]+)(?:\/(game|command|events))?$/);
+  const m = path.match(/^\/api\/conquer\/([a-z0-9-]+)(?:\/(game|command|events|mini))?$/);
   if (!m) return false;
   if (!m[2] && method !== 'DELETE') return false;
   const pending = gameFor(m[1]);
@@ -237,6 +265,10 @@ export async function handleConquer(
     loaded.delete(m[1]);
     json(res, 200, { deleted: games.delete(m[1]) });
   } else if (m[2] === 'game' && method === 'GET') json(res, 200, game.full());
+  else if (m[2] === 'mini' && method === 'GET') {
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'max-age=3600' });
+    res.end(await game.miniMap());
+  }
   else if (m[2] === 'command' && method === 'POST') {
     const result = game.command(await body());
     json(res, 'ok' in result ? 200 : 400, result);

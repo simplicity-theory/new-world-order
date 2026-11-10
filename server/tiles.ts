@@ -102,7 +102,7 @@ export async function getDemTile(world: World, z: number, x: number, y: number):
   return job;
 }
 
-function encodePng(w: number, h: number, rgb: Uint8Array): Buffer {
+export function encodePng(w: number, h: number, rgb: Uint8Array): Buffer {
   const raw = Buffer.alloc((w * 3 + 1) * h);
   for (let r = 0; r < h; r++) raw.set(rgb.subarray(r * w * 3, (r + 1) * w * 3), r * (w * 3 + 1) + 1);
   const chunk = (type: string, data: Buffer): Buffer => {
