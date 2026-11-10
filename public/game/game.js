@@ -186,6 +186,17 @@ function mask() {
   return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [
     [[-170, -80], [170, -80], [170, 80], [-170, 80], [-170, -80]], [[w0, s0], [w0, n0], [e0, n0], [e0, s0], [w0, s0]]] } };
 }
+/** Keep the camera on the generated map: it can step back just far enough to show all of it, and no further. */
+function lockMap() {
+  if (!map || !game) return;
+  const b = game.world.boundsM, c = map.getContainer(), w = c.clientWidth || 1, h = c.clientHeight || 1;
+  const pad = { top: 70, bottom: 130, side: 20 };
+  const uw = Math.max(100, w - 2 * pad.side), uh = Math.max(100, h - pad.top - pad.bottom);
+  const k = Math.max((b.maxx - b.minx) / uw, (b.maxy - b.miny) / uh); // metres to a pixel when the whole map just fits
+  const cx = (b.minx + b.maxx) / 2, cy = (b.miny + b.maxy) / 2;
+  map.setMinZoom(0);
+  map.setMaxBounds([toLngLat(cx - k * (uw / 2 + pad.side), cy - k * (uh / 2 + pad.bottom)), toLngLat(cx + k * (uw / 2 + pad.side), cy + k * (uh / 2 + pad.top))]);
+}
 const collection = (features) => ({ type: 'FeatureCollection', features });
 const empty = collection([]);
 const ring = (pts) => { const c = pts.map(([x, y]) => toLngLat(x, y)); c.push(c[0]); return [c]; };
@@ -605,6 +616,8 @@ function startMap() {
     center: toLngLat(start.x, start.y), zoom: 12.2, minZoom: 8, maxZoom: 18, attributionControl: false, boxZoom: false, keyboard: false,
   });
   window.map = map;
+  lockMap();
+  map.on('resize', lockMap);
   map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'top-left');
   map.on('style.load', addOverlay);
   map.on('zoomend', drawBadges);
@@ -1524,6 +1537,7 @@ function onGraph(full) {
     map.getSource('dem').setTiles([worldUrl('dem', 'png')]);
     map.getSource('terrain').setTiles([worldUrl('dem', 'png')]);
     map.getSource('mask').setData(mask());
+    lockMap();
     drawStatic(true);
     drawLand();
     drawFog();

@@ -73,8 +73,8 @@ export const RULES = {
   winShare: 0.6,
   /** Capturing a town this close to the edge of the map (km) adds this much land beyond it (km). */
   growth: { edgeKm: 5, addKm: 4 },
-  /** Starting map sizes, in chunks (2 km each) east–west and north–south. Medium is 528 km². */
-  sizes: { small: [7, 8], medium: [11, 12], large: [15, 16] },
+  /** Starting map sizes, in chunks (2 km each) east–west and north–south. Medium is 528 km², vast 3,480 km². */
+  sizes: { small: [7, 8], medium: [11, 12], large: [15, 16], huge: [21, 22], vast: [29, 30] },
   /** How the computer-run sides are tuned: their income, and the margin of strength they want before attacking. */
   difficulty: { easy: { income: 0.7, margin: 1.6 }, normal: { income: 1, margin: 1.3 }, hard: { income: 1.4, margin: 1.15 } },
   /** Names and colours for up to three rivals. */
@@ -92,7 +92,7 @@ export type RoadKind = keyof typeof RULES.speed.vehicle;
 export type Difficulty = keyof typeof RULES.difficulty;
 export type MapSize = keyof typeof RULES.sizes;
 export interface Settings { rivals: number; difficulty: Difficulty; size: MapSize; /** The computer plays the player's side too, to watch. */ watch?: boolean; /** The player sees the whole map: no fog of war. */ reveal?: boolean }
-export const DEFAULTS: Settings = { rivals: 1, difficulty: 'normal', size: 'medium', watch: false };
+export const DEFAULTS: Settings = { rivals: 1, difficulty: 'normal', size: 'large', watch: false };
 export const NEUTRAL = 0;
 export const PLAYER = 1;
 export const RIVAL = 2;
