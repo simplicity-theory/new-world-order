@@ -258,6 +258,15 @@ test('an army follows queued waypoints, taking towns as it goes', () => {
   assert.deepEqual(army.orders, []);
 });
 
+test('a neutral town recovers its losses over time', () => {
+  const { sim, s } = game();
+  s.towns.d.garrison.infantry = 1;
+  run(sim, RULES.neutralRecover * 2 + 1);
+  assert.equal(s.towns.d.garrison.infantry, 3);
+  run(sim, RULES.neutralRecover * 2);
+  assert.equal(s.towns.d.garrison.infantry, RULES.neutralGarrison[1].infantry);
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

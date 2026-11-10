@@ -153,6 +153,8 @@
   #sheet .tag.bad { background: #fde8e8; color: #9b1c1c; }
   #sheet .tag.good { background: #e6f4ea; color: #1e6b34; }
   #sheet h3 { margin: 14px 0 2px; font-size: 13px; }
+  #hint { left: 62px; top: 124px; max-width: 300px; padding: 8px 10px 8px 12px; display: none; gap: 8px; align-items: flex-start; border-left: 4px solid var(--you); }
+  #hint button { padding: 0 5px; border: 0; background: none; color: var(--muted); }
   #toast { left: 50%; transform: translateX(-50%); top: 76px; padding: 8px 14px; display: none; max-width: 70%; }
   #help { top: 76px; left: 62px; padding: 12px 16px; display: none; z-index: 4; }
   #help table { border-collapse: collapse; }
@@ -209,6 +211,7 @@
   <button id="keys" title="Keyboard shortcuts">?</button>
   <button id="open-sheet" title="Economy and armies at a glance (O)">Overview</button>
   <button id="toggle-roads" title="Show every road by class, with bridges (L)">Roads</button>
+  <button id="toggle-sound" title="Sound effects on or off">Sound</button>
   <button id="toggle-3d" title="Tilt the map and show the terrain and buildings in 3D (V when nothing is selected)">3D</button>
   <span class="spacer"></span>
   <div class="stat"><b id="money">–</b><span id="income">money</span></div>
@@ -249,6 +252,7 @@
   <header><button data-tab="economy" class="on">Economy</button><button data-tab="armies">Armies</button><span class="spacer"></span><button id="close-sheet" title="Close (Esc)">✕</button></header>
   <div id="sheet-body"></div>
 </div>
+<div id="hint" class="card"><span id="hint-text"></span><button id="hint-close" title="Hide these tips">✕</button></div>
 <div id="toast" class="card"></div>
 <div id="setup">
   <form class="card">

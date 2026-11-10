@@ -25,6 +25,8 @@ export const RULES = {
     vehicle: { motorway: 70, primary: 50, secondary: 38, tertiary: 24 },
   },
   maxQueue: 20,
+  /** A neutral town that has lost defenders gets one back this often (seconds), up to what it started with. */
+  neutralRecover: 45,
   /** Defenders in a town nobody owns, by tier. */
   neutralGarrison: [{ infantry: 1, vehicle: 0 }, { infantry: 3, vehicle: 0 }, { infantry: 9, vehicle: 1 }, { infantry: 20, vehicle: 5 }],
   /** Each of these adds this much to a town's defence: a hill site, a river, each level of fortification. */

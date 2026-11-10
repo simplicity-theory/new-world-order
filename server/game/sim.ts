@@ -619,6 +619,16 @@ export class Sim {
       }
     }
 
+    // Neutral towns slowly make good their losses, so a failed attack is not a free head start on the next.
+    if (Math.floor(s.clock / RULES.neutralRecover) > Math.floor((s.clock - dt) / RULES.neutralRecover)) {
+      for (const t of s.graph.towns) {
+        const town = s.towns[t.id], full = RULES.neutralGarrison[t.tier];
+        if (town.owner !== NEUTRAL || this.besiegersOf(t.id).length) continue;
+        if (town.garrison.infantry < full.infantry) town.garrison.infantry++;
+        else if (town.garrison.vehicle < full.vehicle) town.garrison.vehicle++;
+      }
+    }
+
     // Road repairs.
     for (const r of s.graph.roads) {
       if (r.repair < 0) continue;

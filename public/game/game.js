@@ -665,6 +665,7 @@ function drawEvents() {
   }
   for (const e of fresh) {
     if (e.at) lastPlace = e.at;
+    if (lastEvent) chime(e.report ? (e.report.won ? 'won' : 'lost') : e.kind === 'built' ? 'built' : e.kind === 'siege' ? 'siege' : '');
     // A fight pops up on the map where it happened, unless this is the backlog from loading the game.
     if (e.report && e.at && lastEvent && map) {
       const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: true, className: `report ${e.report.won ? 'won' : 'lost'}`, maxWidth: '300px', offset: 14 })
@@ -751,6 +752,62 @@ $('sheet').addEventListener('click', (e) => {
     openSheet(null);
   }
 });
+
+// ----- Tips and sound -----
+
+/** The next sensible thing to do, for someone finding their feet. Null once the player is clearly under way. */
+function hintNow() {
+  const cap = live.me.capital, s = state(cap);
+  if (!s || s.owner !== PLAYER || live.winner !== null) return null;
+  const held = game.graph.towns.filter((t) => mine(t.id)).length, armies = live.armies.filter(myArmy);
+  if (held >= 3) return null;
+  const base = s.buildings.barracks;
+  if (!base) return 'Press H to go to your capital, then Q to build an infantry base. Towns earn money every minute.';
+  if (!base.done) return 'The base is going up. Use the speed buttons, or − and =, to pass the time. Space pauses.';
+  if (held === 1 && !armies.length && total(s.garrison) < 4) return 'Press Q to train infantry, or Shift+Q to keep training while there is money. You will want four or five for a first attack.';
+  if (held === 1 && !armies.length) return 'Drag from your town’s badge to a neighbouring town. A card shows whether you would win before you let go.';
+  if (armies.some((a) => a.siege)) return 'Your army is besieging the town. Wait for the walls to be breached, or select the army and storm now at a cost.';
+  if (armies.some(camped)) return 'Your army camps where it stops. Drag it to its next target, press V to stand it down into the garrison, or Shift + right-click towns to queue up a route.';
+  return 'Open the Overview (O) to see what each town earns and what your armies cost. Holding ' + live.goal + ' towns wins.';
+}
+let hintsOff = false;
+try { hintsOff = localStorage.getItem('conquer-hints') === 'off'; } catch { /* storage unavailable */ }
+function drawHint() {
+  const text = hintsOff ? null : hintNow();
+  $('hint').style.display = text ? 'flex' : 'none';
+  if (text && $('hint-text').textContent !== text) $('hint-text').textContent = text;
+}
+$('hint-close').addEventListener('click', () => { hintsOff = true; try { localStorage.setItem('conquer-hints', 'off'); } catch { /* fine */ } drawHint(); });
+
+let sound = true, audio = null;
+try { sound = localStorage.getItem('conquer-sound') !== 'off'; } catch { /* storage unavailable */ }
+$('toggle-sound').classList.toggle('on', sound);
+$('toggle-sound').addEventListener('click', () => {
+  sound = !sound;
+  $('toggle-sound').classList.toggle('on', sound);
+  try { localStorage.setItem('conquer-sound', sound ? 'on' : 'off'); } catch { /* fine */ }
+  if (sound) chime('built');
+});
+/** A short synthesised cue. Notes are [frequency, start, length]. */
+function chime(kind) {
+  if (!sound) return;
+  const notes = { won: [[523, 0, 0.12], [659, 0.1, 0.12], [784, 0.2, 0.22]], lost: [[392, 0, 0.16], [311, 0.14, 0.3]], built: [[880, 0, 0.09], [1175, 0.08, 0.14]], siege: [[196, 0, 0.3], [185, 0.25, 0.35]] }[kind];
+  if (!notes) return;
+  try {
+    audio ??= new (window.AudioContext || window.webkitAudioContext)();
+    for (const [freq, at, len] of notes) {
+      const osc = audio.createOscillator(), gain = audio.createGain(), t = audio.currentTime + at;
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t);
+      osc.stop(t + len + 0.02);
+    }
+  } catch { /* no audio available: play silently */ }
+}
 
 // ----- Alerts -----
 // What needs attention right now, as a column of buttons. Click one to go to the next place it is about.
@@ -1239,6 +1296,7 @@ function onTick(data) {
   drawBadges();
   drawEvents();
   drawAlerts();
+  drawHint();
   drawPaths();
   drawMini();
   drawSheet();

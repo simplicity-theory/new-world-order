@@ -1,11 +1,11 @@
 import { RULES } from './rules.ts';
-import { attackPower, type Faction, type Sim, type Units } from './sim.ts';
+import { attackPower, defencePower, type Faction, type Sim, type Units } from './sim.ts';
 
 // The rival. It plays by the same rules and through the same commands as the player.
 // It builds and trains what it can afford, keeps a guard on towns that border someone
 // else, marches to the relief of any town of its own under siege, and attacks the weakest
-// neighbouring town when it can do so with a margin. It does not cut roads, and it knows
-// what defends each town without having to see it.
+// neighbouring town when it can do so with a margin. It sees only what its own towns and
+// armies can see, and guesses at the rest.
 
 const count = (u: Units): number => u.infantry + u.vehicle;
 
@@ -15,6 +15,10 @@ export function think(sim: Sim, f: Faction): void {
   if (!mine.length) return;
   const act = (c: Record<string, unknown>) => 'ok' in sim.command(c, f.id);
   const MARGIN = RULES.difficulty[s.settings?.difficulty ?? 'normal'].margin;
+  // It only knows what defends a town it can see; for the rest it assumes the usual garrison for a place that size, and a bit more.
+  const inSight = sim.visible(f.id);
+  const reckon = (id: string, breached: boolean): number => (inSight.has(id) ? sim.strengthOf(id, breached)
+    : defencePower(RULES.neutralGarrison[sim.nodes.get(id)!.tier], sim.defenceOf(id, breached)) * 1.3);
 
   // Armies that have come to rest in its own towns stand down, so every town's garrison is its whole force.
   for (const a of [...s.armies]) {
@@ -61,7 +65,7 @@ export function think(sim: Sim, f: Faction): void {
   // the last road in, preferring a bridge. Roads it has cut are mended once the danger has passed.
   const hunted = new Set<string>();
   for (const a of s.armies) {
-    if (a.owner === f.id || a.at || a.retreating || s.towns[a.to]?.owner !== f.id || a.leg >= a.path.length - 1) continue;
+    if (a.owner === f.id || a.at || a.retreating || s.towns[a.to]?.owner !== f.id || a.leg >= a.path.length - 1 || !sim.canSee(f.id, sim.position(a))) continue;
     hunted.add(a.to);
     if (attackPower(a) <= sim.strengthOf(a.to, sim.siegeNeed(a.to) > 0)) continue;
     const last = sim.roads.get(a.path[a.path.length - 1].road)!;
@@ -86,7 +90,7 @@ export function think(sim: Sim, f: Faction): void {
     };
     const stops = [...new Set(frontier(t.id).map((l) => firstStop(l.other)))].filter((id) => s.towns[id].owner !== f.id);
     // A walled town will be besieged first, so what matters is its strength once the walls are breached.
-    const targets = stops.map((id) => ({ id, need: sim.strengthOf(id, sim.siegeNeed(id) > 0) })).sort((a, b) => a.need - b.need);
+    const targets = stops.map((id) => ({ id, need: reckon(id, sim.siegeNeed(id) > 0) })).sort((a, b) => a.need - b.need);
     if (targets.length) {
       if (attackPower(force) > targets[0].need * MARGIN + 0.5) act({ type: 'move', from: t.id, to: targets[0].id, ...force });
       continue;
