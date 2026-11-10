@@ -27,6 +27,7 @@ let mode = null;        // what the next click on a town means: 'send', 'rally' 
 let drag = null;        // an order being dragged from a town or army
 let showRoads = false;  // the road-network overlay
 let threeD = false;
+try { showRoads = localStorage.getItem('conquer-roads') === 'on'; } catch { /* storage unavailable */ }
 let fcMarker = null;    // the forecast shown at the target
 const cycle = {};       // alert kind → which of its places was shown last
 let hovered = null;
@@ -350,7 +351,7 @@ function applyView() {
     map.setLayoutProperty('building', 'visibility', threeD ? 'none' : 'visible');
   }
 }
-$('toggle-roads').addEventListener('click', () => { showRoads = !showRoads; applyView(); });
+$('toggle-roads').addEventListener('click', () => { showRoads = !showRoads; try { localStorage.setItem('conquer-roads', showRoads ? 'on' : 'off'); } catch { /* fine */ } applyView(); });
 $('toggle-3d').addEventListener('click', () => { threeD = !threeD; applyView(); map.easeTo({ pitch: threeD ? 55 : 0, bearing: threeD ? map.getBearing() : 0, duration: 700 }); });
 
 // ----- Town badges -----
@@ -375,6 +376,9 @@ function badgeHtml(t) {
   let html = `<span>${units}</span><span style="color:${colorOf(s.owner)}">${ICON.shield}</span><span>${strength.toFixed(strength < 10 ? 1 : 0)}</span>`;
   let title = `${t.name}: ${unitText(s.force)}${camps ? `, ${camps} ${camps > 1 ? 'armies' : 'army'} camped` : ''}; defence strength ${strength.toFixed(1)} (×${s.defence.toFixed(2)})${s.siege ? `; needs a ${Math.round(s.siege)} s siege` : ''}`;
   if (s.besieged) { html += ICON.threat; title += '; under siege'; }
+  // How far along your own siege of this town is.
+  const mySiege = armiesAt(t.id).filter((a) => a.siege && myArmy(a)).sort((p, q) => q.siege.progress / q.siege.need - p.siege.progress / p.siege.need)[0];
+  if (mySiege) { const pc = Math.floor((20 * mySiege.siege.progress) / mySiege.siege.need) * 5; html += `<span class="siege" style="--p:${pc}">${pc}%</span>`; title += `; your siege is ${pc}% done`; }
   if (own) {
     let extra = '';
     for (const [kind, icon] of [['barracks', ICON.base], ['factory', ICON.factory]]) {
@@ -624,6 +628,9 @@ function startMap() {
     if (road && !mode) return select({ road });
     select({});
   });
+  // Double-click a town to go in close; the map's own double-click zoom is off so it does not fight with selecting.
+  map.doubleClickZoom.disable();
+  map.on('dblclick', (e) => { const id = hit(e.point, 'cq-area'); if (id) { const t = town(id); goTo(t.x, t.y, Math.max(map.getZoom(), 14.2)); } else map.easeTo({ center: e.lngLat, zoom: map.getZoom() + 1, duration: 300 }); });
   map.on('contextmenu', (e) => {
     const id = hit(e.point, 'cq-area');
     if (id && canOrder() && !(selTowns.length === 1 && selTowns[0] === id)) order(id, e.originalEvent.shiftKey);
