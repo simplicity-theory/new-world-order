@@ -17,8 +17,14 @@ export function think(sim: Sim, f: Faction): void {
   const MARGIN = RULES.difficulty[s.settings?.difficulty ?? 'normal'].margin;
   // It only knows what defends a town it can see; for the rest it assumes the usual garrison for a place that size, and a bit more.
   const inSight = sim.visible(f.id);
-  const reckon = (id: string, breached: boolean): number => (inSight.has(id) ? sim.strengthOf(id, breached)
-    : defencePower(RULES.neutralGarrison[sim.nodes.get(id)!.tier], sim.defenceOf(id, breached)) * 1.3);
+  // What it has seen or met in battle it remembers, and it never assumes a place is weaker than it last found it.
+  const intel = (f.intel ??= {});
+  for (const id of inSight) intel[id] = sim.strengthOf(id, true);
+  const reckon = (id: string, breached: boolean): number => {
+    if (inSight.has(id)) return sim.strengthOf(id, breached);
+    const guess = defencePower(RULES.neutralGarrison[sim.nodes.get(id)!.tier], sim.defenceOf(id, breached)) * 1.3;
+    return Math.max(guess, (intel[id] ?? 0) * 1.15);
+  };
 
   // Armies that have come to rest in its own towns stand down, so every town's garrison is its whole force.
   for (const a of [...s.armies]) {

@@ -52,6 +52,8 @@ export interface Faction {
   seen: string[];           // towns this faction has had in view at some point
   thought: number;          // clock time of the rival's last decision
   raised: number;           // armies raised so far, for naming them
+  /** What this side last knew of each town's defence strength, from seeing it or from attacking it. */
+  intel?: Record<string, number>;
 }
 export interface Graph { towns: TownNode[]; roads: Road[] }
 /** One side's account of a fight, attached to the event that reports it. */
@@ -455,6 +457,8 @@ export class Sim {
     const ap = attackPower(army, true) * veteran(army), dp = this.strengthOf(id, breached);
     const r = fight(ap, dp);
     const before = town.owner, at: Pt = [node.x, node.y];
+    // Whoever attacks a town finds out what was defending it.
+    (this.faction(army.owner).intel ??= {})[id] = this.strengthOf(id, true);
     const report = (mine: 'att' | 'def', attLeft: Units, defLeft: Units): Report => (mine === 'att'
       ? { kind: 'assault', place: node.name, won: r.win, you: { before: attackers, after: attLeft, power: ap }, them: { owner: before, before: defenders, after: defLeft, power: dp } }
       : { kind: 'defence', place: node.name, won: !r.win, you: { before: defenders, after: defLeft, power: dp }, them: { owner: army.owner, before: attackers, after: attLeft, power: ap } });
