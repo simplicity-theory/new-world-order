@@ -101,6 +101,15 @@ const tests = {
     assert.match(await T.text('.report'), /won/);
     assert.match(await T.text('#events'), /captured/);
     assert.equal((await T.live()).towns[target.id].owner, 1);
+    // The log can be narrowed to fights and sieges alone.
+    const all = (await T.page.$$('#events > div')).length;
+    await T.page.click('#log-fights');
+    const shown = await T.page.$$eval('#events > div', (rows) => rows.map((r) => r.className || r.textContent).filter((c) => !/^Mapping/.test(c)));
+    assert.ok(shown.length >= 1 && shown.length < all, `fights filter: ${shown.length} of ${all}`);
+    assert.ok(shown.every((c) => c === 'win' || c === 'loss'), `only fights are listed: ${JSON.stringify(shown)}`);
+    // The minimap is drawn, and darkened where nothing has been seen.
+    const fog = await T.page.$eval('#mini', (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let dark = 0, lit = 0; for (let i = 0; i < d.length; i += 4) (d[i] + d[i + 1] + d[i + 2] < 150 ? dark++ : lit++); return { dark, lit }; });
+    assert.ok(fog.dark > 0 && fog.lit > 0, `minimap fog: ${JSON.stringify(fog)}`);
     await T.done();
   },
 
