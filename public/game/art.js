@@ -15,16 +15,16 @@ const UNIT = 64;       // pictures are designed on a 64 × 64 grid
 const COLS = 8, ROWS = 8;
 const FRAME_MS = 33;
 
-const INK = 0x10151b, STEEL = 0x55616e, PALE = 0xdfe6ee, SKIN = 0xf0c9a0, KHAKI = 0xe3d5a6, DRAB = 0x8c8362, GOLD = 0xf2c230, HELMET = 0x3d4a41;
+export const INK = 0x10151b, STEEL = 0x55616e, PALE = 0xdfe6ee, SKIN = 0xf0c9a0, KHAKI = 0xe3d5a6, DRAB = 0x8c8362, GOLD = 0xf2c230, HELMET = 0x3d4a41;
 
-const hex = (s) => { const n = parseInt(String(s).replace('#', ''), 16); return Number.isFinite(n) ? n : 0x7d848c; };
-function mix(a, b, f) {
+export const hex = (s) => { const n = parseInt(String(s).replace('#', ''), 16); return Number.isFinite(n) ? n : 0x7d848c; };
+export function mix(a, b, f) {
   const ch = (s) => Math.round(((a >> s) & 255) * (1 - f) + ((b >> s) & 255) * f);
   return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
-const darken = (c, f) => mix(c, 0x0b0f14, f);
-const lighten = (c, f) => mix(c, 0xffffff, f);
-const G = (parent) => parent.addChild(new Graphics());
+export const darken = (c, f) => mix(c, 0x0b0f14, f);
+export const lighten = (c, f) => mix(c, 0xffffff, f);
+export const G = (parent) => parent.addChild(new Graphics());
 /** A layer drawn `k` times larger, growing up and out from the middle of the ground, so a small subject fills its card. */
 function enlarged(parent, k, floor = 58) {
   const z = parent.addChild(new Container());
@@ -48,7 +48,7 @@ const field = (c, color) => backdrop(c, darken(color, 0.55), lighten(color, 0.12
 const dusk = (c) => backdrop(c, 0x243245, 0x8ea2b6, 0x364233);
 
 /** A flag flying from (x, y) to the right; returns the function that waves it. */
-function flag(parent, x, y, w, h, color) {
+export function flag(parent, x, y, w, h, color) {
   const g = G(parent);
   return (t) => {
     const n = 7, top = [], bottom = [];
@@ -62,11 +62,12 @@ function flag(parent, x, y, w, h, color) {
   };
 }
 
-/** Puffs of smoke that rise from (x, y) and fade. */
-function smoke(parent, x, y, { n = 4, rise = 16, drift = 5, r = 2.6, color = 0xd8dde3, period = 2.4, alpha = 0.7 } = {}) {
+/** Puffs of smoke that rise from (x, y) and fade. Called with `on` false, the smoke clears. */
+export function smoke(parent, x, y, { n = 4, rise = 16, drift = 5, r = 2.6, color = 0xd8dde3, period = 2.4, alpha = 0.7 } = {}) {
   const g = G(parent);
-  return (t) => {
+  return (t, on = true) => {
     g.clear();
+    if (!on) return;
     for (let i = 0; i < n; i++) {
       const p = (t / period + i / n) % 1;
       g.circle(x + drift * p + Math.sin(p * 6 + i * 2) * 1.2, y - rise * p, r * (0.5 + p)).fill({ color, alpha: (1 - p) * alpha });
@@ -88,8 +89,8 @@ function wheel(parent, x, y, r, { tyre = INK, hub = STEEL, spokes = 4, width = 2
   return w;
 }
 
-/** A soldier marching to the right, feet at (x, y); returns the function that moves him. */
-function soldier(parent, x, y, scale, phase = 0, coat = KHAKI) {
+/** A soldier marching to the right, feet at (x, y); returns the function that moves him. Called with `on` false, he stands at ease. */
+export function soldier(parent, x, y, scale, phase = 0, coat = KHAKI) {
   const s = parent.addChild(new Container());
   s.position.set(x, y);
   s.scale.set(scale);
@@ -113,13 +114,202 @@ function soldier(parent, x, y, scale, phase = 0, coat = KHAKI) {
   const arm = s.addChild(new Graphics());
   arm.position.set(0.5, -22.5);
   arm.roundRect(-1.5, 0, 3, 9, 1.4).fill(darken(coat, 0.2));
-  return (t) => {
-    const a = Math.sin(t * 6 + phase);
+  return (t, on = true) => {
+    const a = on ? Math.sin(t * 6 + phase) : 0;
     front.rotation = a * 0.5;
     back.rotation = -a * 0.5;
     arm.rotation = -0.5 + a * 0.12;
-    s.y = y - Math.abs(Math.cos(t * 6 + phase)) * 0.9 * scale;
+    s.y = on ? y - Math.abs(Math.cos(t * 6 + phase)) * 0.9 * scale : y;
   };
+}
+
+/** A scout on a motorcycle heading right, wheels on the ground at (33, 56.5). Called with `on` false, it is parked. */
+export function rider(c, color, coat = KHAKI) {
+  const dust = smoke(c, 12, 54, { n: 4, rise: 5, drift: -12, r: 2.4, color: lighten(color, 0.6), period: 0.9, alpha: 0.55 });
+  const bike = c.addChild(new Container());
+  bike.position.set(33, 49);
+  const rear = wheel(bike, -12, 0, 7.5), fore = wheel(bike, 13, 0, 7.5);
+  const g = G(bike);
+  g.moveTo(-12, 0).lineTo(-3, -10).lineTo(9, -10).lineTo(13, 0).stroke({ width: 2.2, color: STEEL, join: 'round', cap: 'round' });
+  g.moveTo(-3, -10).lineTo(2, 0).lineTo(-12, 0).stroke({ width: 1.8, color: STEEL, join: 'round' });
+  g.roundRect(-3, -14.5, 11, 5, 2.4).fill(PALE);                                         // tank
+  g.roundRect(-12, -12.5, 9, 2.6, 1.3).fill(INK);                                        // seat
+  g.moveTo(9, -10).lineTo(11.5, -17.5).stroke({ width: 1.6, color: INK, cap: 'round' }); // forks up to the bars
+  g.circle(13.5, -12, 1.8).fill(GOLD);                                                   // lamp
+  g.moveTo(-7, -13).lineTo(-1, -3).stroke({ width: 3.6, color: darken(DRAB, 0.3), cap: 'round' });   // leg
+  g.moveTo(-7, -14).lineTo(1, -27).stroke({ width: 6.4, color: coat, cap: 'round' });                // back
+  g.moveTo(0.5, -25).lineTo(11, -17.5).stroke({ width: 2.6, color: darken(coat, 0.2), cap: 'round' }); // arm
+  g.ellipse(3.2, -33, 4.3, 3.4).fill(INK);                                               // cap, with the face over its lower half
+  g.circle(3.8, -30.6, 3.2).fill(SKIN);
+  g.roundRect(4, -32.4, 3.8, 2.2, 1).fill(PALE);                                         // goggles
+  return (t, on = true) => {
+    if (on) rear.rotation = fore.rotation = t * 11;
+    bike.y = 49 + (on ? Math.sin(t * 15) * 0.5 : 0);
+    bike.rotation = on ? Math.sin(t * 2.3) * 0.02 : 0;
+    dust(t, on);
+  };
+}
+
+/** An armoured car heading right, wheels on the ground at (33, 56.6). Called with `on` false, it is parked. */
+export function car(c, color, hull = 0x8f9ba8) {
+  const fumes = smoke(c, 9, 40, { n: 3, rise: 9, drift: -8, r: 2.2, color: 0xcfd6dd, period: 1.3, alpha: 0.5 });
+  const body = c.addChild(new Container());
+  body.position.set(33, 50);
+  const g = G(body);
+  g.poly([-22, -3, -19, -15, 7, -15, 13, -10, 21, -9, 22, -3]).fill(hull);
+  g.poly([-22, -3, 22, -3, 20, 1, -20, 1]).fill(darken(hull, 0.45));
+  g.poly([-19, -15, 7, -15, 13, -10, -20.2, -10]).fill(lighten(hull, 0.22));
+  g.roundRect(-10, -22, 14, 7.5, 2).fill(darken(hull, 0.12));                        // turret
+  g.roundRect(-10, -22, 14, 2.4, 1.2).fill(lighten(hull, 0.3));
+  g.roundRect(3, -19.6, 16, 2.4, 1.2).fill(darken(hull, 0.4));                       // gun
+  g.rect(-16, -9.2, 9, 2.6).fill(lighten(color, 0.25));                              // side stripe in the side's colour
+  g.rect(8.5, -13.4, 3.6, 2.4).fill(INK);                                            // driver's slit
+  const wheels = [-14, 0, 14].map((x) => wheel(body, x, 1, 5.6, { spokes: 3 }));
+  return (t, on = true) => {
+    if (on) for (const w of wheels) w.rotation = t * 8;
+    body.y = 50 + (on ? Math.sin(t * 9) * 0.45 : 0);
+    body.rotation = on ? Math.sin(t * 4.5) * 0.012 : 0;
+    fumes(t, on);
+  };
+}
+
+/** A field gun pointing right, wheel on the ground at (27, 56). `doing` is 'fire', 'roll' (being towed) or 'rest'. */
+export function gun(c) {
+  const piece = c.addChild(new Container());
+  piece.position.set(27, 56);
+  const trail = G(piece);
+  trail.moveTo(0, -9).lineTo(-19, -0.5).stroke({ width: 2.8, color: INK, cap: 'round' });
+  trail.moveTo(-19, -0.5).lineTo(-22, -3).stroke({ width: 2.2, color: INK, cap: 'round' });
+  const barrel = piece.addChild(new Container());
+  barrel.position.set(0, -12);
+  barrel.rotation = -0.47;
+  const b = G(barrel);
+  b.roundRect(-7, -2.4, 30, 4.8, 1.6).fill(0x9aa5b1);
+  b.roundRect(-7, -2.4, 30, 1.6, 0.8).fill(lighten(0x9aa5b1, 0.3));
+  b.roundRect(-10, -3.4, 8, 6.8, 1.6).fill(STEEL);
+  b.roundRect(21, -3, 3.2, 6, 1).fill(STEEL);
+  const shield = G(piece);
+  shield.poly([3, -22, 6.5, -21, 5, -5, 1.5, -6]).fill(darken(STEEL, 0.15));
+  const w = wheel(piece, 0, -9, 9, { spokes: 5, width: 2.4, hub: 0x8a6f4a });
+  const flash = G(c), puff = G(c);
+  const PERIOD = 2.8;
+  return (t, doing = 'fire') => {
+    const firing = doing === 'fire';
+    const p = (t % PERIOD) / PERIOD, kick = firing ? Math.exp(-p * 9) : 0;
+    barrel.x = -5 * kick * Math.cos(0.47);
+    barrel.y = -12 + 5 * kick * Math.sin(0.47);
+    if (doing !== 'rest') w.rotation = firing ? -kick * 0.25 : t * 5;
+    piece.x = 27 - kick * 1.4;
+    const mx = 27 + 25 * Math.cos(-0.47), my = 56 - 12 + 25 * Math.sin(-0.47);
+    flash.clear();
+    puff.clear();
+    if (!firing) return;
+    if (p < 0.045) {
+      const s = 1 - p / 0.045;
+      flash.star(mx + 3, my - 1.6, 6, 8 * s + 2, 3 * s + 1, t * 9).fill({ color: 0xfff1a8, alpha: 0.95 });
+      flash.circle(mx + 2, my - 1, 3 * s + 1).fill(0xffffff);
+    }
+    if (p < 0.6) {
+      const q = p / 0.6;
+      for (let i = 0; i < 3; i++) puff.circle(mx + 4 + q * (9 + i * 4), my - 2 - q * (5 + i * 3) + i, 2 + q * (3.5 + i)).fill({ color: 0xe6eaee, alpha: (1 - q) * 0.6 });
+    }
+  };
+}
+
+// Buildings stand on the ground at y = 52, centred on x = 32. Each returns the function that moves it;
+// called with `on` false it is shown quiet: flags hang, chimneys are cold and nobody is about.
+
+/** The infantry base: a drill hall with the side's flag and a sentry pacing in front. */
+export function hall(c, color) {
+  const g = G(c);
+  g.rect(9, 32, 42, 20).fill(0xcfc2a3);
+  g.rect(9, 32, 42, 3).fill({ color: 0x000000, alpha: 0.18 });
+  g.poly([5.5, 33, 30, 19, 54.5, 33]).fill(darken(color, 0.15));
+  g.poly([30, 19, 54.5, 33, 50, 33, 30, 21.6]).fill({ color: 0x000000, alpha: 0.22 });
+  g.roundRect(26.5, 40, 7, 12, 1).fill(INK);
+  const windows = [13, 19.5, 37.5, 44].map((x) => G(c).rect(x, 39, 4, 5).fill(0xffe7a0));
+  g.moveTo(46, 33).lineTo(46, 7).stroke({ width: 1.2, color: PALE, cap: 'round' });
+  g.rect(4, 51, 9, 3).fill(0x8d8468).rect(6, 48.4, 7, 3).fill(0x9a9175);            // sandbags
+  const wave = flag(c, 46.5, 7.5, 13, 8, lighten(color, 0.25));
+  const post = c.addChild(new Container());
+  const sentry = soldier(post, 0, 56, 0.6);
+  return (t, on = true) => {
+    wave(on ? t : 0.4);
+    windows.forEach((w, i) => { w.alpha = on ? 0.82 + 0.18 * Math.sin(t * 1.7 + i * 2.1) : 0.45; });
+    sentry(t, on);
+    // The sentry paces across the front and comes round again; off duty he stands by the door.
+    post.x = on ? ((t * 5) % 76) - 6 : 20;
+  };
+}
+
+/** The vehicle factory: saw-tooth roof, a smoking chimney and a turning gear. */
+export function works(c, color) {
+  const fumes = smoke(c, 46.5, 9, { n: 5, rise: 13, drift: 9, r: 2.8, color: 0xbcc4cc, period: 3.2 });
+  const g = G(c);
+  g.rect(43, 10, 7, 26).fill(0x8a4b3c);
+  g.rect(43, 14, 7, 3).fill(lighten(color, 0.2));
+  g.rect(43, 10, 2.2, 26).fill({ color: 0x000000, alpha: 0.2 });
+  for (let i = 0; i < 3; i++) {
+    const x = 7 + i * 12;
+    g.poly([x, 34, x, 24, x + 12, 34]).fill(0x6c7783);
+    g.poly([x + 1.2, 33, x + 1.2, 26.4, x + 9, 33]).fill(0xbfe0ee);
+  }
+  g.rect(7, 34, 46, 18).fill(0x97a1ac);
+  g.rect(7, 34, 46, 2.4).fill({ color: 0x000000, alpha: 0.2 });
+  g.rect(11, 41, 14, 11).fill(INK);
+  for (let i = 0; i < 4; i++) g.rect(11, 42.5 + i * 2.6, 14, 0.8).fill({ color: PALE, alpha: 0.22 });
+  const windows = [30, 36.5, 43].map((x) => G(c).rect(x, 40, 4.4, 4.4).fill(0xffd27a));
+  const gear = c.addChild(new Container());
+  gear.position.set(39, 48.5);
+  const gg = G(gear);
+  gg.star(0, 0, 8, 4.6, 3.4).fill(GOLD);
+  gg.circle(0, 0, 1.5).fill(INK);
+  return (t, on = true) => {
+    fumes(t, on);
+    if (on) gear.rotation = t * 1.6;
+    windows.forEach((w, i) => { w.alpha = on ? 0.75 + 0.25 * Math.sin(t * 4 + i * 1.9) * Math.sin(t * 1.3 + i) : 0.4; });
+  };
+}
+
+/** The market: a stall under a striped awning, and a coin turning above it. */
+export function stall(c, color) {
+  const g = G(c);
+  g.rect(12, 30, 2, 22).fill(0x6b5237).rect(50, 30, 2, 22).fill(0x6b5237);
+  g.rect(11, 41, 42, 11).fill(0xa98253);
+  g.rect(11, 41, 42, 2).fill(lighten(0xa98253, 0.25));
+  for (let i = 0; i < 6; i++) {
+    const x = 8 + i * 8, shade = i % 2 ? PALE : lighten(color, 0.15);
+    g.poly([x + 2, 22, x + 10, 22, x + 8, 31, x, 31]).fill(shade);
+    g.circle(x + 4, 31, 4).fill(shade);
+  }
+  g.rect(8, 21, 48, 1.6).fill(darken(color, 0.3));
+  g.roundRect(15, 36, 7, 5, 1).fill(0xd98a4e).roundRect(24, 37, 6, 4, 1).fill(0x9bbf62).roundRect(32, 35.5, 8, 5.5, 1).fill(0xd9c45a).roundRect(42, 37, 7, 4, 1).fill(0xc9685e);
+  const coin = c.addChild(new Container());
+  const cg = G(coin);
+  cg.circle(0, 0, 6.2).fill(GOLD).stroke({ width: 1.1, color: darken(GOLD, 0.35) });
+  cg.rect(-0.9, -3.4, 1.8, 6.8).fill(darken(GOLD, 0.4));
+  return (t, on = true) => {
+    coin.position.set(32, 12 + (on ? Math.sin(t * 2.4) * 1.6 : 0));
+    coin.scale.x = on ? Math.cos(t * 2.2) : 1;
+  };
+}
+
+/** Fortifications: a stone tower between two walls, flying the side's flag. */
+export function keep(c, color) {
+  const stone = 0xb1ada2, g = G(c);
+  const battlements = (x, y, w, n) => { const m = w / (2 * n - 1); for (let i = 0; i < n; i++) g.rect(x + i * 2 * m, y - 3.4, m, 3.6).fill(stone); };
+  g.rect(3, 36, 58, 16).fill(darken(stone, 0.16));
+  battlements(3, 36, 58, 9);
+  g.rect(21, 20, 22, 32).fill(stone);
+  battlements(21, 20, 22, 4);
+  g.rect(21, 20, 5, 32).fill({ color: 0x000000, alpha: 0.14 });
+  for (const [x, y] of [[29, 27], [36, 33], [25, 37], [34, 24], [38, 42], [8, 42], [14, 46], [50, 41], [55, 46]]) g.rect(x, y, 4, 1).fill({ color: 0x000000, alpha: 0.16 });
+  g.roundRect(28, 40, 8, 12, 4).fill(INK);
+  g.rect(28, 46, 8, 6).fill(INK);
+  g.rect(30.6, 28, 2.8, 5.5).fill(INK);
+  g.moveTo(32, 16.6).lineTo(32, 3).stroke({ width: 1.2, color: PALE, cap: 'round' });
+  const wave = flag(c, 32.5, 3.5, 13, 7.5, lighten(color, 0.25));
+  return (t, on = true) => wave(on ? t : 0.4);
 }
 
 // ----- The pictures -----
@@ -136,199 +326,31 @@ const PICTURES = {
   scout(c, color) {
     field(c, color);
     const streaks = G(c);
-    c = enlarged(c, 1.15);
-    const dust = smoke(c, 12, 54, { n: 4, rise: 5, drift: -12, r: 2.4, color: lighten(color, 0.6), period: 0.9, alpha: 0.55 });
-    const bike = c.addChild(new Container());
-    bike.position.set(33, 49);
-    const rear = wheel(bike, -12, 0, 7.5), fore = wheel(bike, 13, 0, 7.5);
-    const g = G(bike);
-    g.moveTo(-12, 0).lineTo(-3, -10).lineTo(9, -10).lineTo(13, 0).stroke({ width: 2.2, color: STEEL, join: 'round', cap: 'round' });
-    g.moveTo(-3, -10).lineTo(2, 0).lineTo(-12, 0).stroke({ width: 1.8, color: STEEL, join: 'round' });
-    g.roundRect(-3, -14.5, 11, 5, 2.4).fill(PALE);                                         // tank
-    g.roundRect(-12, -12.5, 9, 2.6, 1.3).fill(INK);                                        // seat
-    g.moveTo(9, -10).lineTo(11.5, -17.5).stroke({ width: 1.6, color: INK, cap: 'round' }); // forks up to the bars
-    g.circle(13.5, -12, 1.8).fill(GOLD);                                                   // lamp
-    g.moveTo(-7, -13).lineTo(-1, -3).stroke({ width: 3.6, color: darken(DRAB, 0.3), cap: 'round' });   // leg
-    g.moveTo(-7, -14).lineTo(1, -27).stroke({ width: 6.4, color: KHAKI, cap: 'round' });               // back
-    g.moveTo(0.5, -25).lineTo(11, -17.5).stroke({ width: 2.6, color: darken(KHAKI, 0.2), cap: 'round' }); // arm
-    g.ellipse(3.2, -33, 4.3, 3.4).fill(INK);                                               // cap, with the face over its lower half
-    g.circle(3.8, -30.6, 3.2).fill(SKIN);
-    g.roundRect(4, -32.4, 3.8, 2.2, 1).fill(PALE);                                         // goggles
+    const ride = rider(enlarged(c, 1.15), color);
     return (t) => {
-      rear.rotation = fore.rotation = t * 11;
-      bike.y = 49 + Math.sin(t * 15) * 0.5;
-      bike.rotation = Math.sin(t * 2.3) * 0.02;
+      ride(t);
       streaks.clear();
       for (let i = 0; i < 4; i++) {
         const x = UNIT + 20 - ((t * 70 + i * 31) % (UNIT + 40)), y = 14 + i * 9;
         streaks.moveTo(x, y).lineTo(x + 12, y).stroke({ width: 1, color: 0xffffff, alpha: 0.22, cap: 'round' });
       }
-      dust(t);
     };
   },
 
   vehicle(c, color) {
     field(c, color);
-    c = enlarged(c, 1.28);
-    const fumes = smoke(c, 9, 40, { n: 3, rise: 9, drift: -8, r: 2.2, color: 0xcfd6dd, period: 1.3, alpha: 0.5 });
-    const car = c.addChild(new Container());
-    car.position.set(33, 50);
-    const hull = 0x8f9ba8;
-    const g = G(car);
-    g.poly([-22, -3, -19, -15, 7, -15, 13, -10, 21, -9, 22, -3]).fill(hull);
-    g.poly([-22, -3, 22, -3, 20, 1, -20, 1]).fill(darken(hull, 0.45));
-    g.poly([-19, -15, 7, -15, 13, -10, -20.2, -10]).fill(lighten(hull, 0.22));
-    g.roundRect(-10, -22, 14, 7.5, 2).fill(darken(hull, 0.12));                        // turret
-    g.roundRect(-10, -22, 14, 2.4, 1.2).fill(lighten(hull, 0.3));
-    g.roundRect(3, -19.6, 16, 2.4, 1.2).fill(darken(hull, 0.4));                       // gun
-    g.rect(-16, -9.2, 9, 2.6).fill(lighten(color, 0.25));                              // side stripe in the side's colour
-    g.rect(8.5, -13.4, 3.6, 2.4).fill(INK);                                            // driver's slit
-    const wheels = [-14, 0, 14].map((x) => wheel(car, x, 1, 5.6, { spokes: 3 }));
-    return (t) => {
-      for (const w of wheels) w.rotation = t * 8;
-      car.y = 50 + Math.sin(t * 9) * 0.45;
-      car.rotation = Math.sin(t * 4.5) * 0.012;
-      fumes(t);
-    };
+    return car(enlarged(c, 1.28), color);
   },
 
   artillery(c, color) {
     field(c, color);
-    c = enlarged(c, 1.3);
-    const gun = c.addChild(new Container());
-    gun.position.set(27, 56);
-    const trail = G(gun);
-    trail.moveTo(0, -9).lineTo(-19, -0.5).stroke({ width: 2.8, color: INK, cap: 'round' });
-    trail.moveTo(-19, -0.5).lineTo(-22, -3).stroke({ width: 2.2, color: INK, cap: 'round' });
-    const barrel = gun.addChild(new Container());
-    barrel.position.set(0, -12);
-    barrel.rotation = -0.47;
-    const b = G(barrel);
-    b.roundRect(-7, -2.4, 30, 4.8, 1.6).fill(0x9aa5b1);
-    b.roundRect(-7, -2.4, 30, 1.6, 0.8).fill(lighten(0x9aa5b1, 0.3));
-    b.roundRect(-10, -3.4, 8, 6.8, 1.6).fill(STEEL);
-    b.roundRect(21, -3, 3.2, 6, 1).fill(STEEL);
-    const shield = G(gun);
-    shield.poly([3, -22, 6.5, -21, 5, -5, 1.5, -6]).fill(darken(STEEL, 0.15));
-    const w = wheel(gun, 0, -9, 9, { spokes: 5, width: 2.4, hub: 0x8a6f4a });
-    const flash = G(c), puff = G(c);
-    const PERIOD = 2.8;
-    return (t) => {
-      const p = (t % PERIOD) / PERIOD, kick = Math.exp(-p * 9);
-      barrel.x = -5 * kick * Math.cos(0.47);
-      barrel.y = -12 + 5 * kick * Math.sin(0.47);
-      w.rotation = -kick * 0.25;
-      gun.x = 27 - kick * 1.4;
-      const mx = 27 + 25 * Math.cos(-0.47), my = 56 - 12 + 25 * Math.sin(-0.47);
-      flash.clear();
-      if (p < 0.045) {
-        const s = 1 - p / 0.045;
-        flash.star(mx + 3, my - 1.6, 6, 8 * s + 2, 3 * s + 1, t * 9).fill({ color: 0xfff1a8, alpha: 0.95 });
-        flash.circle(mx + 2, my - 1, 3 * s + 1).fill(0xffffff);
-      }
-      puff.clear();
-      if (p < 0.6) {
-        const q = p / 0.6;
-        for (let i = 0; i < 3; i++) puff.circle(mx + 4 + q * (9 + i * 4), my - 2 - q * (5 + i * 3) + i, 2 + q * (3.5 + i)).fill({ color: 0xe6eaee, alpha: (1 - q) * 0.6 });
-      }
-    };
+    return gun(enlarged(c, 1.3));
   },
 
-  /** The infantry base: a drill hall with the side's flag. */
-  barracks(c, color) {
-    dusk(c);
-    const g = G(c);
-    g.rect(9, 32, 42, 20).fill(0xcfc2a3);
-    g.rect(9, 32, 42, 3).fill({ color: 0x000000, alpha: 0.18 });
-    g.poly([5.5, 33, 30, 19, 54.5, 33]).fill(darken(color, 0.15));
-    g.poly([30, 19, 54.5, 33, 50, 33, 30, 21.6]).fill({ color: 0x000000, alpha: 0.22 });
-    g.roundRect(26.5, 40, 7, 12, 1).fill(INK);
-    const windows = [13, 19.5, 37.5, 44].map((x) => G(c).rect(x, 39, 4, 5).fill(0xffe7a0));
-    g.moveTo(46, 33).lineTo(46, 7).stroke({ width: 1.2, color: PALE, cap: 'round' });
-    g.rect(4, 51, 9, 3).fill(0x8d8468).rect(6, 48.4, 7, 3).fill(0x9a9175);            // sandbags
-    const wave = flag(c, 46.5, 7.5, 13, 8, lighten(color, 0.25));
-    const sentry = soldier(c, 0, 56, 0.6);
-    return (t) => {
-      wave(t);
-      windows.forEach((w, i) => { w.alpha = 0.82 + 0.18 * Math.sin(t * 1.7 + i * 2.1); });
-      sentry(t);
-      // The sentry paces across the front and comes round again.
-      c.children[c.children.length - 1].x = ((t * 5) % 76) - 6;
-    };
-  },
-
-  /** The vehicle factory: saw-tooth roof, a smoking chimney and a turning gear. */
-  factory(c, color) {
-    dusk(c);
-    const fumes = smoke(c, 46.5, 9, { n: 5, rise: 13, drift: 9, r: 2.8, color: 0xbcc4cc, period: 3.2 });
-    const g = G(c);
-    g.rect(43, 10, 7, 26).fill(0x8a4b3c);
-    g.rect(43, 14, 7, 3).fill(lighten(color, 0.2));
-    g.rect(43, 10, 2.2, 26).fill({ color: 0x000000, alpha: 0.2 });
-    for (let i = 0; i < 3; i++) {
-      const x = 7 + i * 12;
-      g.poly([x, 34, x, 24, x + 12, 34]).fill(0x6c7783);
-      g.poly([x + 1.2, 33, x + 1.2, 26.4, x + 9, 33]).fill(0xbfe0ee);
-    }
-    g.rect(7, 34, 46, 18).fill(0x97a1ac);
-    g.rect(7, 34, 46, 2.4).fill({ color: 0x000000, alpha: 0.2 });
-    g.rect(11, 41, 14, 11).fill(INK);
-    for (let i = 0; i < 4; i++) g.rect(11, 42.5 + i * 2.6, 14, 0.8).fill({ color: PALE, alpha: 0.22 });
-    const windows = [30, 36.5, 43].map((x) => G(c).rect(x, 40, 4.4, 4.4).fill(0xffd27a));
-    const gear = c.addChild(new Container());
-    gear.position.set(39, 48.5);
-    const gg = G(gear);
-    gg.star(0, 0, 8, 4.6, 3.4).fill(GOLD);
-    gg.circle(0, 0, 1.5).fill(INK);
-    return (t) => {
-      fumes(t);
-      gear.rotation = t * 1.6;
-      windows.forEach((w, i) => { w.alpha = 0.75 + 0.25 * Math.sin(t * 4 + i * 1.9) * Math.sin(t * 1.3 + i); });
-    };
-  },
-
-  /** The market: a stall under a striped awning, and a coin turning above it. */
-  market(c, color) {
-    dusk(c);
-    const g = G(c);
-    g.rect(12, 30, 2, 22).fill(0x6b5237).rect(50, 30, 2, 22).fill(0x6b5237);
-    g.rect(11, 41, 42, 11).fill(0xa98253);
-    g.rect(11, 41, 42, 2).fill(lighten(0xa98253, 0.25));
-    for (let i = 0; i < 6; i++) {
-      const x = 8 + i * 8, shade = i % 2 ? PALE : lighten(color, 0.15);
-      g.poly([x + 2, 22, x + 10, 22, x + 8, 31, x, 31]).fill(shade);
-      g.circle(x + 4, 31, 4).fill(shade);
-    }
-    g.rect(8, 21, 48, 1.6).fill(darken(color, 0.3));
-    g.roundRect(15, 36, 7, 5, 1).fill(0xd98a4e).roundRect(24, 37, 6, 4, 1).fill(0x9bbf62).roundRect(32, 35.5, 8, 5.5, 1).fill(0xd9c45a).roundRect(42, 37, 7, 4, 1).fill(0xc9685e);
-    const coin = c.addChild(new Container());
-    const cg = G(coin);
-    cg.circle(0, 0, 6.2).fill(GOLD).stroke({ width: 1.1, color: darken(GOLD, 0.35) });
-    cg.rect(-0.9, -3.4, 1.8, 6.8).fill(darken(GOLD, 0.4));
-    return (t) => {
-      coin.position.set(32, 12 + Math.sin(t * 2.4) * 1.6);
-      coin.scale.x = Math.cos(t * 2.2);
-    };
-  },
-
-  /** Fortifications: a stone tower between two walls, flying the side's flag. */
-  fort(c, color) {
-    dusk(c);
-    const stone = 0xb1ada2, g = G(c);
-    const battlements = (x, y, w, n) => { const m = w / (2 * n - 1); for (let i = 0; i < n; i++) g.rect(x + i * 2 * m, y - 3.4, m, 3.6).fill(stone); };
-    g.rect(3, 36, 58, 16).fill(darken(stone, 0.16));
-    battlements(3, 36, 58, 9);
-    g.rect(21, 20, 22, 32).fill(stone);
-    battlements(21, 20, 22, 4);
-    g.rect(21, 20, 5, 32).fill({ color: 0x000000, alpha: 0.14 });
-    for (const [x, y] of [[29, 27], [36, 33], [25, 37], [34, 24], [38, 42], [8, 42], [14, 46], [50, 41], [55, 46]]) g.rect(x, y, 4, 1).fill({ color: 0x000000, alpha: 0.16 });
-    g.roundRect(28, 40, 8, 12, 4).fill(INK);
-    g.rect(28, 46, 8, 6).fill(INK);
-    g.rect(30.6, 28, 2.8, 5.5).fill(INK);
-    g.moveTo(32, 16.6).lineTo(32, 3).stroke({ width: 1.2, color: PALE, cap: 'round' });
-    const wave = flag(c, 32.5, 3.5, 13, 7.5, lighten(color, 0.25));
-    return (t) => wave(t);
-  },
+  barracks(c, color) { dusk(c); return hall(c, color); },
+  factory(c, color) { dusk(c); return works(c, color); },
+  market(c, color) { dusk(c); return stall(c, color); },
+  fort(c, color) { dusk(c); return keep(c, color); },
 
   /** A town's portrait: bigger places have more roofs and a church; `extra` is the tier, then letters for hill, river and port. */
   town(c, color, extra = '1') {

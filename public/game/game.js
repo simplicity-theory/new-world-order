@@ -1,6 +1,8 @@
 import * as maplibregl from '/vendor/maplibre-gl.mjs';
 import { buildStyle } from '/style.js';
 import { artReady, picture, startArt } from '/game/art.js';
+import { cityLayers } from '/game/city.js';
+import { drawMapArt, mapArtReady, spanOf, startMapArt } from '/game/mapart.js';
 
 // The page for Conquer. The server runs the game; this draws it and sends commands.
 
@@ -28,6 +30,7 @@ let mode = null;        // what the next click on a town means: 'send', 'rally' 
 let drag = null;        // an order being dragged from a town or army
 let showRoads = false;  // the road-network overlay
 let threeD = false;
+let city = null;         // the 3D buildings drawn into the map, when three.js is available
 try { showRoads = localStorage.getItem('conquer-roads') === 'on'; } catch { /* storage unavailable */ }
 let fcMarker = null;    // the forecast shown at the target
 const cycle = {};       // alert kind → which of its places was shown last
@@ -205,8 +208,11 @@ const ring = (pts) => { const c = pts.map(([x, y]) => toLngLat(x, y)); c.push(c[
 const lineOf = (pts) => pts.map(([x, y]) => toLngLat(x, y));
 
 function addOverlay() {
-  const sources = ['cq-land', 'cq-fog', 'cq-paths', 'cq-bridges', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
+  const sources = ['cq-land', 'cq-fog', 'cq-paths', 'cq-bridges', 'cq-areas', 'cq-roads', 'cq-cuts', 'cq-sites', 'cq-built', 'cq-route', 'cq-drag', 'cq-labels', 'cq-groups'];
   for (const id of sources) map.addSource(id, { type: 'geojson', data: empty });
+  // The towns' buildings as 3D models, under everything the game draws.
+  if (!city) city = window.city = cityLayers(map);
+  map.addLayer(city.city);
   // The game draws its own town names, so the map's are hidden.
   if (map.getLayer('place')) map.setLayoutProperty('place', 'visibility', 'none');
   const text = { 'text-font': ['sans-serif'], 'text-allow-overlap': true };
@@ -239,7 +245,14 @@ function addOverlay() {
       'line-opacity': 0.75, 'line-dasharray': ['match', ['get', 'state'], 'selected', ['literal', [1, 0]], ['literal', [1.2, 1.6]]] } });
   map.addLayer({ id: 'cq-cut', type: 'symbol', source: 'cq-cuts', layout: { ...text, 'text-field': '✕', 'text-size': 22 },
     paint: { 'text-color': '#c62828', 'text-halo-color': '#ffffff', 'text-halo-width': 2.5 } });
+  // A base or factory stands on its own parcel of the town: the parcel as a yard, and the building on it,
+  // seen from above as roofs and in the 3D view as a building among the town's own.
   map.addLayer({ id: 'cq-site', type: 'fill', source: 'cq-sites', minzoom: 12, paint: { 'fill-color': ['get', 'color'], 'fill-opacity': ['get', 'fill'], 'fill-outline-color': '#ffffff' } });
+  map.addLayer(city.works);
+  // Without three.js the same buildings are plain blocks.
+  map.addLayer({ id: 'cq-built', type: 'fill', source: 'cq-built', minzoom: 12.5, layout: { 'fill-sort-key': ['get', 'top'] }, paint: { 'fill-color': ['get', 'color'], 'fill-outline-color': '#00000055' } });
+  map.addLayer({ id: 'cq-built-3d', type: 'fill-extrusion', source: 'cq-built', minzoom: 12.5, layout: { visibility: 'none' },
+    paint: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-height': ['get', 'top'], 'fill-extrusion-base': ['get', 'base'], 'fill-extrusion-vertical-gradient': true } });
   map.addLayer({ id: 'cq-site-label', type: 'symbol', source: 'cq-sites', minzoom: 14,
     layout: { 'text-font': ['sans-serif'], 'text-field': ['get', 'label'], 'text-size': 11 }, paint: { 'text-color': '#ffffff', 'text-halo-color': '#00000066', 'text-halo-width': 1 } });
   map.addLayer({ id: 'cq-route', type: 'line', source: 'cq-route', layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -266,6 +279,7 @@ function addOverlay() {
     paint: { 'text-color': '#12305c', 'text-halo-color': '#ffffffe6', 'text-halo-width': 1.6 } });
   map.addLayer({ id: 'cq-group-label', type: 'symbol', source: 'cq-groups',
     layout: { ...text, 'text-field': ['get', 'label'], 'text-size': 10.5 }, paint: { 'text-color': '#ffffff' } });
+  styleArmies();
   drawStatic(true);
   drawLand();
   drawFog();
@@ -319,11 +333,64 @@ function drawPaths() {
     geometry: { type: 'LineString', coordinates: lineOf(pathAhead(a)) } }))));
 }
 
+// ----- Buildings on their parcels -----
+// A building is put together from boxes, laid out along the parcel's longer side and sized to fit it.
+
+const blend = (a, b, f) => { const p = (s, i) => parseInt(s.slice(1 + 2 * i, 3 + 2 * i), 16); return `#${[0, 1, 2].map((i) => Math.round(p(a, i) * (1 - f) + p(b, i) * f).toString(16).padStart(2, '0')).join('')}`; };
+
+/** The boxes of the building of this kind on this parcel, in the owner's colour; `built` runs from 0 to 1 while it goes up. */
+function buildingBoxes(ring, kind, color, built) {
+  // Axes: u along the parcel's longest edge, v across it; the building keeps inside the middle of the parcel.
+  let ux = 1, uy = 0, longest = 0;
+  ring.forEach(([x, y], i) => { const [nx, ny] = ring[(i + 1) % ring.length], d = Math.hypot(nx - x, ny - y); if (d > longest) { longest = d; ux = (nx - x) / d; uy = (ny - y) / d; } });
+  const us = ring.map(([x, y]) => x * ux + y * uy), vs = ring.map(([x, y]) => -x * uy + y * ux);
+  const cu = (Math.min(...us) + Math.max(...us)) / 2, cv = (Math.min(...vs) + Math.max(...vs)) / 2;
+  const hu = Math.min(46, (Math.max(...us) - Math.min(...us)) * 0.36), hv = Math.min(32, (Math.max(...vs) - Math.min(...vs)) * 0.36);
+  const at = (u, v) => toLngLat((cu + u) * ux - (cv + v) * uy, (cu + u) * uy + (cv + v) * ux);
+  const rise = Math.max(0.06, built), raw = built < 1;
+  const out = [];
+  /** A box from (u0, v0) to (u1, v1) in metres from the middle of the parcel, standing from `base` up to `top`. */
+  const box = (u0, v0, u1, v1, base, top, paint) => out.push({ type: 'Feature', properties: { color: raw ? blend(paint, '#a89878', 0.55) : paint, base: base * rise, top: top * rise },
+    geometry: { type: 'Polygon', coordinates: [[at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1), at(u0, v0)]] } });
+  /** The same from fractions of the room there is: −1 to 1 each way. */
+  const part = (a0, b0, a1, b1, base, top, paint) => box(a0 * hu, b0 * hv, a1 * hu, b1 * hv, base, top, paint);
+  /** A square post of side `w` metres centred at a fraction of the room. */
+  const post = (a, b, w, base, top, paint) => box(a * hu - w / 2, b * hv - w / 2, a * hu + w / 2, b * hv + w / 2, base, top, paint);
+  const roof = blend(color, '#1a2028', 0.2), bright = blend(color, '#ffffff', 0.2);
+  if (kind === 'barracks') {
+    // A walled compound: the drill hall, two huts, a watchtower at the corner and the flag.
+    for (const [a0, b0, a1, b1] of [[-1, -1, 1, -0.94], [-1, 0.94, 1, 1], [-1, -1, -0.96, 1], [0.96, -1, 1, 1]]) part(a0, b0, a1, b1, 0, 3, '#a9a495');
+    part(-0.78, -0.2, 0.2, 0.74, 0, 8.5, '#cfc2a3');
+    part(-0.82, -0.25, 0.24, 0.79, 8.5, 10, roof);
+    part(-0.6, 0.12, 0.02, 0.42, 10, 12, blend(roof, '#000000', 0.15));
+    for (const b of [-0.72, -0.22]) { part(0.42, b, 0.86, b + 0.36, 0, 4.5, '#d9cdb0'); part(0.4, b - 0.03, 0.88, b + 0.39, 4.5, 5.6, roof); }
+    post(-0.86, -0.82, 5.5, 0, 14, '#b9b3a2');
+    post(-0.86, -0.82, 7, 14, 15.6, roof);
+    post(0.1, -0.62, 0.7, 0, 21, '#e8ecef');
+    if (!raw) box(0.1 * hu + 0.35, -0.62 * hv - 0.25, 0.1 * hu + 7, -0.62 * hv + 0.25, 16.5, 20.5, bright);
+  } else {
+    // A works: saw-tooth sheds, an office, two tanks and a tall chimney with a band in the side's colour.
+    for (let i = 0; i < 3; i++) {
+      const a0 = -0.86 + i * 0.4;
+      part(a0, -0.72, a0 + 0.27, 0.72, 0, 9, '#97a1ac');
+      part(a0 + 0.27, -0.72, a0 + 0.4, 0.72, 0, 12.5, '#6c7783');
+      part(a0 + 0.02, -0.66, a0 + 0.25, 0.66, 9, 9.4, '#bfe0ee');
+    }
+    part(0.46, 0.12, 0.88, 0.72, 0, 7, '#c9c2b4');
+    part(0.44, 0.09, 0.9, 0.75, 7, 8, roof);
+    for (const a of [0.56, 0.8]) post(a, -0.18, 7, 0, 8, '#b8c0c8');
+    post(0.66, -0.62, 4, 0, 32, '#8a4b3c');
+    post(0.66, -0.62, 4.8, 24, 26.5, bright);
+    post(0.66, -0.62, 4.8, 31, 32.4, '#5d3229');
+  }
+  return out;
+}
+
 let staticKey = '';
 /** Everything on the overlay except moving groups, badges and the route preview. Redrawn only when it changes. */
 function drawStatic(force) {
   if (!map?.getSource('cq-areas')) return;
-  const areas = [], labels = [], sites = [];
+  const areas = [], labels = [], sites = [], built = [], lots = [], works = [];
   for (const t of game.graph.towns) {
     const s = state(t.id), color = colorOf(s.owner), known = s.owner !== UNKNOWN;
     areas.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(t.outline) },
@@ -332,8 +399,14 @@ function drawStatic(force) {
     labels.push({ type: 'Feature', geometry: { type: 'Point', coordinates: toLngLat(t.x, t.y) }, properties: { name: `${capital ? '★ ' : ''}${t.name}`, tier: t.tier } });
     Object.keys(game.rules.buildings).forEach((kind, k) => {
       const b = s.buildings?.[kind];
-      if (b) sites.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(t.sites[k]) },
-        properties: { color, fill: b.done ? 0.95 : 0.45, label: b.done ? game.rules.buildings[kind].name : 'Building…' } });
+      if (!b) return;
+      const progress = b.done ? 1 : Math.round((b.progress ?? 0) * 20) / 20;
+      const busy = b.done && live.speed > 0 && Object.values(b.lines ?? {}).some((l) => l.queue);
+      sites.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: ring(t.sites[k]) },
+        properties: { color: blend(color, '#c9c2b0', 0.55), fill: 0.95, label: b.done ? game.rules.buildings[kind].name : 'Building…', progress, busy } });
+      if (city?.ok) works.push({ id: `${t.id}|${k}`, ring: t.sites[k], kind, color, built: progress, busy });
+      else built.push(...buildingBoxes(t.sites[k], kind, color, progress));
+      lots.push(`${t.id}|${k}`);
     });
   }
   const roads = game.graph.roads.map((r) => {
@@ -348,6 +421,10 @@ function drawStatic(force) {
   map.getSource('cq-areas').setData(collection(areas));
   map.getSource('cq-labels').setData(collection(labels));
   map.getSource('cq-sites').setData(collection(sites));
+  map.getSource('cq-built').setData(collection(built));
+  city?.setWorks(works);
+  // The town's own buildings on a parcel make way for what the game builds there.
+  for (const id of ['building', 'building-3d']) if (map.getLayer(id)) map.setFilter(id, lots.length ? ['!', ['in', ['coalesce', ['get', 'lot'], ''], ['literal', lots]]] : null);
   map.getSource('cq-roads').setData(collection(roads));
   map.getSource('cq-cuts').setData(collection(cuts));
   map.getSource('cq-bridges').setData(collection(game.graph.roads.flatMap((r) => r.bridges.map((b) => ({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: toLngLat(b.x, b.y) } })))));
@@ -364,6 +441,13 @@ function applyView() {
     map.setTerrain(threeD ? { source: 'terrain', exaggeration: 1.5 } : null);
     map.setLayoutProperty('building-3d', 'visibility', threeD ? 'visible' : 'none');
     map.setLayoutProperty('building', 'visibility', threeD ? 'none' : 'visible');
+  }
+  map.setLayoutProperty('cq-built-3d', 'visibility', threeD ? 'visible' : 'none');
+  map.setLayoutProperty('cq-built', 'visibility', threeD ? 'none' : 'visible');
+  if (city?.ok) {
+    // The models stand in for the map's own flat and block buildings in both views.
+    for (const id of ['building', 'building-3d']) if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+    city.setTerrain(threeD);
   }
 }
 $('toggle-roads').addEventListener('click', () => { showRoads = !showRoads; try { localStorage.setItem('conquer-roads', showRoads ? 'on' : 'off'); } catch { /* fine */ } applyView(); });
@@ -469,7 +553,15 @@ function armyPoint(a, ahead = 0) {
   if (a.at) {
     const t = town(a.at), k = armiesAt(a.at).indexOf(a);
     const p = map.project(toLngLat(t.x, t.y));
-    const q = map.unproject([p.x + 34 + 24 * (k % 4), p.y - 20 - 24 * Math.floor(k / 4)]);
+    let q;
+    if (pictured) {
+      // Drawn as formations, each takes the room its figures need: three to a row, side by side.
+      const here = armiesAt(a.at), row = Math.floor(k / 3), s = figureScale(), wide = (b) => Math.max(34, spanOf(b) * s) + 12;
+      const before = here.slice(row * 3, k).reduce((w, b) => w + wide(b), 0);
+      // The bottom row starts clear of the town's name and its badge.
+      const clear = Math.max(nameReach(t), (badges.get(t.id)?.el.offsetWidth ?? 0) / 2 + 10);
+      q = map.unproject([p.x + clear + before + wide(a) / 2, p.y - 6 - 74 * s * row]);
+    } else q = map.unproject([p.x + 34 + 24 * (k % 4), p.y - 20 - 24 * Math.floor(k / 4)]);
     return toMetres(q.lng, q.lat);
   }
   const leg = a.path[a.leg], road = roadOf(leg.road);
@@ -477,16 +569,55 @@ function armyPoint(a, ahead = 0) {
   return pointAlong(road.pts, leg.rev ? road.length - d : d);
 }
 
+/** How far to each side of a town's centre its name reaches on screen, roughly, so pictures can stand clear of it. */
+const nameReach = (t) => Math.max(34, (12.5 + 2 * t.tier) * 0.29 * (t.name.length + 2) + 10);
+/** How large the figures are drawn at the current zoom. */
+const figureScale = () => Math.min(1.25, Math.max(0.6, 0.8 + (map.getZoom() - 12) * 0.16));
+// Close in, armies are drawn as formations of their units; further out, and without WebGL, as plain markers.
+const PICTURES_FROM = 11.4;
+let pictured = false;
+const facing = new Map();   // army id → 1 heading right, −1 heading left
+
+/** Switch the map's own army markers between the plain look and invisible click targets under the pictures. */
+function styleArmies() {
+  if (!map?.getLayer('cq-groups')) return;
+  const on = pictured;
+  map.setPaintProperty('cq-groups', 'circle-opacity', on ? 0.001 : ['match', ['get', 'mood'], 'retreat', 0.55, 1]);
+  map.setPaintProperty('cq-groups', 'circle-stroke-opacity', on ? 0 : 1);
+  map.setPaintProperty('cq-groups', 'circle-radius', on ? 24 : 10);
+  map.setPaintProperty('cq-groups', 'circle-translate', on ? [0, -12] : [0, 0]);
+  for (const id of ['cq-group-heavy', 'cq-group-stars', 'cq-group-label', 'cq-group-name']) map.setLayoutProperty(id, 'visibility', on ? 'none' : 'visible');
+  // The selection ring and the pointer's halo become patches of ground under the formation.
+  map.setPaintProperty('cq-group-ring', 'circle-radius', on ? 30 : 14);
+  map.setPaintProperty('cq-group-ring', 'circle-opacity', on ? 0.6 : 0.9);
+  map.setPaintProperty('cq-group-hot', 'circle-radius', on ? 36 : 20);
+  for (const id of ['cq-group-ring', 'cq-group-hot']) map.setPaintProperty(id, 'circle-pitch-alignment', on ? 'map' : 'viewport');
+}
+
 function drawArmies() {
   if (!map?.getSource('cq-groups') || !live) return;
+  const want = mapArtReady && map.getZoom() >= PICTURES_FROM;
+  if (want !== pictured) { pictured = want; styleArmies(); if (!want) drawMapArt([], 1); }
   // Between ticks, carry each marching army forward at its speed so movement is smooth.
   const running = live.winner === null || live.dismissed;
   const ahead = running ? Math.min(0.4, (performance.now() - tickAt) / 1000) * live.speed : 0;
+  const drawn = [];
   map.getSource('cq-groups').setData(collection(live.armies.map((a) => {
     const [x, y] = armyPoint(a, ahead);
+    if (pictured) {
+      const p = map.project(toLngLat(x, y)), marching = !a.at && running && live.speed > 0;
+      if (!a.at) {
+        // Which way it is heading on screen, from where it will be a moment from now.
+        const [nx, ny] = armyPoint(a, ahead + 2), dx = map.project(toLngLat(nx, ny)).x - p.x;
+        if (Math.abs(dx) > 0.5) facing.set(a.id, dx > 0 ? 1 : -1);
+      } else facing.set(a.id, a.siege ? -1 : 1);   // beside a town: besiegers face it, a camp faces away
+      drawn.push({ id: a.id, x: p.x, y: p.y, color: colorOf(a.owner), units: a, label: String(total(a)), stars: '★'.repeat(a.stars || 0), name: a.owner === PLAYER && map.getZoom() >= 12.6 ? a.name : '', facing: facing.get(a.id) ?? 1,
+        doing: marching ? 'march' : a.siege && running && live.speed > 0 ? 'siege' : 'rest', retreating: !!a.retreating });
+    }
     return { type: 'Feature', geometry: { type: 'Point', coordinates: toLngLat(x, y) },
       properties: { id: a.id, color: colorOf(a.owner), label: String(total(a)), heavy: (a.vehicle || 0) + (a.artillery || 0) > 0 ? 1 : 0, stars: '★'.repeat(a.stars || 0), name: a.owner === PLAYER ? a.name : '', selected: a.id === selArmy || selMany.includes(a.id) ? 1 : 0, hot: a.id === hot.army ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
   })));
+  if (pictured) drawMapArt(drawn, figureScale());
 }
 function frame() { drawArmies(); requestAnimationFrame(frame); }
 
@@ -620,6 +751,9 @@ function startMap() {
     center: toLngLat(start.x, start.y), zoom: 12.2, minZoom: 8, maxZoom: 18, attributionControl: false, boxZoom: false, keyboard: false,
   });
   window.map = map;
+  city = null;
+  pictured = false;
+  startMapArt(map);
   lockMap();
   map.on('resize', lockMap);
   map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'bottom-left');

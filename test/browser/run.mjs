@@ -63,7 +63,7 @@ async function game(settings = {}) {
 const tests = {
   async 'build, train from the sidebar, cancel with a refund'() {
     const T = await game();
-    await T.debug({ money: 1000 });
+    await T.debug({ money: 2000 });
     await T.key('q');
     await T.command({ type: 'speed', value: 8 });
     await T.page.waitForSelector('#prod .tile[data-do="train:infantry"]', { timeout: 30000 });
@@ -71,6 +71,13 @@ const tests = {
     const tile = await (await T.page.$('#prod .tile[data-do="train:infantry"]')).boundingBox();
     await T.page.keyboard.down('Shift'); await T.page.mouse.click(tile.x + 15, tile.y + 15); await T.page.keyboard.up('Shift');
     await sleep(500);
+    // The base stands on its parcel of the town as a 3D model, among the town's own buildings, which are models too.
+    await T.until(() => window.city.ok && window.city.count().works === 1);
+    assert.equal(await T.page.evaluate(() => window.map.getLayoutProperty('building', 'visibility')), 'none', 'the models stand in for the flat buildings');
+    const zoom = await T.page.evaluate(() => window.map.getZoom());
+    await T.page.evaluate(() => window.map.jumpTo({ zoom: 15 }));
+    await T.until(() => window.city.count().buildings > 10 && window.city.count().waiting === 0);
+    await T.page.evaluate((z) => window.map.jumpTo({ zoom: z }), zoom);
     const queued = Number(await T.text('#prod .tile .count'));
     assert.ok(queued >= 4, `shift-click queues several (${queued})`);
     const before = (await T.live()).me.money;
@@ -146,6 +153,15 @@ const tests = {
     await T.key('x');
     await sleep(400);
     assert.deepEqual((await T.armies()).map((a) => a.label).sort(), ['1', '4']);
+    // Close in, each army is drawn as a formation; zoomed out, the plain markers come back.
+    assert.equal(await T.page.$eval('#map-art', (c) => c.dataset.armies), '2', 'both armies are drawn as formations');
+    assert.equal(await T.page.evaluate(() => window.map.getLayoutProperty('cq-group-label', 'visibility')), 'none');
+    const zoom = await T.page.evaluate(() => window.map.getZoom());
+    await T.page.evaluate(() => window.map.jumpTo({ zoom: 10.5 }));
+    await T.until(() => document.querySelector('#map-art').dataset.armies === '0');
+    assert.equal(await T.page.evaluate(() => window.map.getLayoutProperty('cq-group-label', 'visibility')), 'visible');
+    await T.page.evaluate((z) => window.map.jumpTo({ zoom: z }), zoom);
+    await T.until(() => document.querySelector('#map-art').dataset.armies === '2');
     await T.key('n');
     await sleep(400);
     assert.match(await T.text('#cmd'), /^Old Guard/);

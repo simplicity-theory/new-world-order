@@ -132,6 +132,19 @@ export class WorldGen {
    * the world origin, for games built on the map. Each road runs centre to centre along
    * the route that is drawn, including the avenue into each town.
    */
+  /** Two blocks of a town for the game to put buildings on, industrial ones for preference. */
+  private sites(s: Settlement): Pt[][] {
+    const sites = this.town(s).blocks.filter((b) => b.kind !== 'park' && b.kind !== 'civic').map((b) => {
+      const cx = b.ring.reduce((t, p) => t + p[0], 0) / b.ring.length, cy = b.ring.reduce((t, p) => t + p[1], 0) / b.ring.length;
+      return { ring: b.ring, score: Math.abs(Math.hypot(cx - s.x, cy - s.y) - 0.45 * s.r) - (b.kind === 'industrial' ? 0.3 * s.r : 0) };
+    }).sort((p, q) => p.score - q.score).slice(0, 2).map((b) => b.ring);
+    for (let k = sites.length; k < 2; k++) {
+      const cx = s.x + (k ? 110 : -110), cy = s.y + 90;
+      sites.push(([[-35, -25], [35, -25], [35, 25], [-35, 25]] as Pt[]).map(([u, v]): Pt => [cx + u, cy + v]));
+    }
+    return sites;
+  }
+
   roadGraph(box: Box) {
     const { terrain, hydro, relief, settlements } = this;
     const [ox, oy] = this.origin;
@@ -223,15 +236,7 @@ export class WorldGen {
           const d = Math.max(reach + 40, 300);
           outline.push(local([s.x + Math.cos(a) * d, s.y + Math.sin(a) * d]));
         }
-        // Two blocks for the game to put buildings on, industrial ones for preference.
-        const sites = this.town(s).blocks.filter((b) => b.kind !== 'park' && b.kind !== 'civic').map((b) => {
-          const cx = b.ring.reduce((t, p) => t + p[0], 0) / b.ring.length, cy = b.ring.reduce((t, p) => t + p[1], 0) / b.ring.length;
-          return { ring: b.ring, score: Math.abs(Math.hypot(cx - s.x, cy - s.y) - 0.45 * s.r) - (b.kind === 'industrial' ? 0.3 * s.r : 0) };
-        }).sort((p, q) => p.score - q.score).slice(0, 2).map((b) => b.ring.map(local));
-        for (let k = sites.length; k < 2; k++) {
-          const cx = s.x + (k ? 110 : -110), cy = s.y + 90;
-          sites.push(([[-35, -25], [35, -25], [35, 25], [-35, 25]] as Pt[]).map(([u, v]) => local([cx + u, cy + v])));
-        }
+        const sites = this.sites(s).map((ring) => ring.map(local));
         const here = relief.at(s.x, s.y);
         let around = 0, sea = false;
         for (let k = 0; k < 16; k++) {
@@ -274,6 +279,14 @@ export class WorldGen {
       for (const piece of clipLine(pts, box)) {
         features.push({ type: 'Feature', properties: { layer, kind, ...extra }, geometry: { type: 'LineString', coordinates: piece.map(this.ll) } });
       }
+    };
+    // A building says where its middle is, how wide and deep it is and which way it faces, so it can be drawn as a model.
+    const building = (b: { x: number; y: number; ring: Pt[] }, kind: string, extra: Props) => {
+      const [p0, p1, p2] = b.ring, [lon, lat] = this.ll([b.x, b.y]);
+      poly('building', kind, [b.ring], {
+        ...extra, lon, lat, w: Math.round(Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * 10) / 10, d: Math.round(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) * 10) / 10,
+        a: Math.round(Math.atan2(p1[1] - p0[1], p1[0] - p0[0]) * 1000) / 1000,
+      });
     };
     const point = (layer: string, kind: string, x: number, y: number, extra?: Props) => {
       features.push({ type: 'Feature', properties: { layer, kind, ...extra }, geometry: { type: 'Point', coordinates: this.ll([x, y]) } });
@@ -508,8 +521,12 @@ export class WorldGen {
         line('road', st.kind, st.pts, { name: st.name });
         streets.push(st);
       }
+      // A building on one of the town's two game sites says which, so the game can clear the site when it builds there.
+      const lots = this.sites(s);
       for (const b of town.buildings) {
-        if (inBox(box, b.x, b.y) && !blocked(b)) poly('building', b.kind, [b.ring], { height: b.height });
+        if (!inBox(box, b.x, b.y) || blocked(b)) continue;
+        const lot = lots.findIndex((ring) => pointInRing(b.x, b.y, ring));
+        building(b, b.kind, lot < 0 ? { height: b.height } : { height: b.height, lot: `${s.a}_${s.b}|${lot}` });
       }
       for (const p of town.piers) if (inBox(box, p.x, p.y)) poly('manmade', 'pier', [p.ring]);
       for (const p of town.pois) if (inBox(box, p.x, p.y)) point('poi', p.kind, p.x, p.y, { name: p.name });
@@ -535,7 +552,7 @@ export class WorldGen {
           const ring: Pt[] = [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]
             .map(([p, q]) => [px + p * cs - q * sn, py + p * sn + q * cs] as Pt);
           const bld = { x: px, y: py, ring };
-          if (inBox(box, px, py) && !blocked(bld)) poly('building', 'farm', [ring], { height: 6 });
+          if (inBox(box, px, py) && !blocked(bld)) building(bld, 'farm', { height: 6 });
         };
         rect(0, 0, 13, 9);
         rect(26, 4, 22, 11);
