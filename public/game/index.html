@@ -22,6 +22,9 @@
   .stat { display: flex; flex-direction: column; line-height: 1.15; }
   .stat b { font-size: 16px; font-variant-numeric: tabular-nums; }
   .stat span { color: var(--muted); font-size: 11px; }
+  #progress { display: block; height: 3px; margin-top: 3px; border-radius: 2px; background: #e4e7eb; overflow: hidden; }
+  #progress i { display: block; height: 100%; width: 0; background: var(--you); transition: width 0.4s; }
+  #to-explorer { color: var(--muted); font-size: 12px; }
   #speed { display: flex; gap: 3px; }
   #speed button { padding: 4px 8px; min-width: 34px; }
   .spacer { flex: 1; }
@@ -177,6 +180,19 @@
   #setup .buttons { display: flex; justify-content: flex-end; gap: 8px; }
   #setup p { margin: 0; }
 
+  /* Narrower windows: drop the event log first, then the minimap, so the command bar keeps its room. */
+  @media (max-width: 1180px) {
+    #log { display: none; }
+    #cmd { left: 12px; }
+    #to-explorer, #toggle-sound { display: none; }
+  }
+  @media (max-width: 900px) {
+    #minibox { display: none; }
+    #cmd { right: 12px; }
+    #prod { display: none !important; }
+    .who { width: 120px; }
+  }
+
   /* Town badges on the map. */
   .badge { display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 10px; border: 2px solid var(--c, #7d848c); background: #fffffff2;
     font: 600 11.5px/1.2 system-ui, sans-serif; color: var(--ink); cursor: pointer; white-space: nowrap; box-shadow: 0 1px 3px #0003; }
@@ -213,9 +229,10 @@
   <button id="toggle-roads" title="Show every road by class, with bridges (L)">Roads</button>
   <button id="toggle-sound" title="Sound effects on or off">Sound</button>
   <button id="toggle-3d" title="Tilt the map and show the terrain and buildings in 3D (V when nothing is selected)">3D</button>
+  <a id="to-explorer" href="/" title="The map explorer: generate and browse worlds without the game">Map explorer</a>
   <span class="spacer"></span>
   <div class="stat"><b id="money">–</b><span id="income">money</span></div>
-  <div class="stat"><b id="towns">–</b><span id="goal">towns held</span></div>
+  <div class="stat"><b id="towns">–</b><span id="goal">towns held</span><i id="progress"><i></i></i></div>
   <div class="stat"><b id="clock">–</b><span>time played</span></div>
   <div id="speed" role="group" aria-label="Game speed">
     <button data-speed="0" title="Pause (Space)">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>

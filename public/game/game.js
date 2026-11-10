@@ -636,6 +636,7 @@ function drawHud() {
   $('income').title = `Income ${Math.round(live.me.income)}, upkeep ${Math.round(live.me.upkeep)} a minute`;
   $('towns').textContent = `${held} of ${game.graph.towns.length}`;
   $('goal').textContent = `towns held, ${live.goal} wins`;
+  $('progress').firstElementChild.style.width = `${Math.min(100, (100 * held) / live.goal)}%`;
   $('clock').textContent = clockText(live.clock);
   for (const b of $('speed').children) b.classList.toggle('on', Number(b.dataset.speed) === live.speed);
   const over = live.winner !== null && !live.dismissed;
