@@ -9,11 +9,15 @@ const ROOT = join(import.meta.dirname, '..');
 const PORT = Number(process.env.PORT ?? 5173);
 
 const STATIC: Record<string, [string, string]> = {
-  '/': ['public/index.html', 'text/html; charset=utf-8'],
+  // The game is the front page. /conquer is its old address, kept so saved links still open.
+  '/': ['public/game/index.html', 'text/html; charset=utf-8'],
+  '/conquer': ['public/game/index.html', 'text/html; charset=utf-8'],
+  '/explorer': ['public/index.html', 'text/html; charset=utf-8'],
   '/app.js': ['public/app.js', 'text/javascript; charset=utf-8'],
   '/style.js': ['public/style.js', 'text/javascript; charset=utf-8'],
-  '/conquer': ['public/game/index.html', 'text/html; charset=utf-8'],
   '/game/game.js': ['public/game/game.js', 'text/javascript; charset=utf-8'],
+  '/game/art.js': ['public/game/art.js', 'text/javascript; charset=utf-8'],
+  '/vendor/pixi.mjs': ['node_modules/pixi.js/dist/pixi.min.mjs', 'text/javascript'],
   '/vendor/maplibre-gl.css': ['node_modules/maplibre-gl/dist/maplibre-gl.css', 'text/css'],
   '/vendor/maplibre-gl.mjs': ['node_modules/maplibre-gl/dist/maplibre-gl.mjs', 'text/javascript'],
   '/vendor/maplibre-gl-shared.mjs': ['node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs', 'text/javascript'],
@@ -104,7 +108,7 @@ createServer((req, res) => {
     if (!res.headersSent) json(res, 500, { error: String(err?.message ?? err) });
     else res.end();
   });
-}).listen(PORT, () => console.log(`new-world running at http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Conquer running at http://localhost:${PORT}`));
 
 // Stopping the server (Ctrl-C, or a kill) saves any games in play first.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

@@ -73,7 +73,7 @@ function showWorld(w, { refit }) {
   setStatus(`${w.name} — ${size(w)}, seed “${w.seed}”${w.stale ? ' — made with an older generator, new land will not line up' : ''}`);
   // The game starts from the same seed, so it is played on this same world.
   const play = document.querySelector('#panel h1 a');
-  if (play) play.href = `/conquer?seed=${encodeURIComponent(w.seed)}&name=${encodeURIComponent(w.name)}`;
+  if (play) play.href = `/?seed=${encodeURIComponent(w.seed)}&name=${encodeURIComponent(w.name)}`;
   loadStats();
 }
 

@@ -1,6 +1,7 @@
 {
   "name": "new-world",
   "version": "1.0.0",
+  "description": "Conquer: a real-time strategy game played on procedurally generated maps.",
   "scripts": {
     "start": "node server/main.ts",
     "dev": "node --watch server/main.ts",
@@ -11,6 +12,7 @@
   "dependencies": {
     "geojson-vt": "^5.0.4",
     "maplibre-gl": "^6.17.0",
+    "pixi.js": "^8.22.0",
     "vt-pbf": "^3.1.3"
   },
   "devDependencies": {

@@ -36,7 +36,7 @@ async function game(settings = {}) {
   await page.setViewport({ width: 1400, height: 950 });
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? 'Old Guard' : undefined));
-  await page.goto(`${ORIGIN}/conquer?game=${id}`, { waitUntil: 'networkidle2' });
+  await page.goto(`${ORIGIN}/?game=${id}`, { waitUntil: 'networkidle2' });
   await page.waitForFunction('window.map && window.map.getLayer("cq-area")', { timeout: 30000 });
   await sleep(600);
   const town = (tid) => g.graph.towns.find((t) => t.id === tid);
@@ -67,6 +67,7 @@ const tests = {
     await T.key('q');
     await T.command({ type: 'speed', value: 8 });
     await T.page.waitForSelector('#prod .tile[data-do="train:infantry"]', { timeout: 30000 });
+    await T.page.click('#tabs [data-side="prod"]');
     const tile = await (await T.page.$('#prod .tile[data-do="train:infantry"]')).boundingBox();
     await T.page.keyboard.down('Shift'); await T.page.mouse.click(tile.x + 15, tile.y + 15); await T.page.keyboard.up('Shift');
     await sleep(500);
@@ -86,6 +87,25 @@ const tests = {
     await T.debug({ town: target.id, infantry: 2, fort: 0 });
     await sleep(400);
     assert.equal((await T.page.$$('#cmd .unit')).length, 12);
+    // Each card shows its unit's picture, copied from the sheet PixiJS draws.
+    await sleep(200);
+    const drawn = await T.page.$$eval('#cmd .unit canvas.pic', (all) => all.filter((c) => c.getContext('2d').getImageData(64, 20, 1, 1).data[3] === 255).length);
+    assert.equal(drawn, 12, 'every unit card has its picture');
+    // A picture stands still until the pointer is over its card.
+    const look = (i) => T.page.$$eval('#cmd .unit canvas.pic', (all, n) => all[n].toDataURL(), i);
+    const box = await (await T.page.$$('#cmd .unit'))[0].boundingBox();
+    await T.page.mouse.move(box.x + box.width / 2, box.y - 200);
+    await sleep(200);
+    const before = [await look(0), await look(1)];
+    await sleep(300);
+    assert.deepEqual([await look(0), await look(1)], before, 'cards are still without the pointer');
+    await T.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await sleep(300);
+    assert.notEqual(await look(0), before[0], 'the card under the pointer moves');
+    assert.equal(await look(1), before[1], 'its neighbour stays still');
+    await T.page.mouse.move(box.x + box.width / 2, box.y - 200);
+    await sleep(200);
+    assert.equal(await look(0), before[0], 'and it returns to its still pose');
     const cards = await T.page.$$('#cmd .unit');
     await cards[0].click();
     assert.match(await T.text('#cmd .pick'), /^1 of 12/);
@@ -167,6 +187,50 @@ const tests = {
     await T.page.click('#sheet [data-tab="rivals"]');
     assert.match(await T.text('#sheet-body'), /Crimson League/);
     await T.key('Escape');
+    // The sidebar lists every town and army of yours; pointing at a row lights it up on the map.
+    const near = T.neighbours[0];
+    await T.debug({ town: near.id, owner: 1, infantry: 2 });
+    await T.page.click('#tabs [data-side="towns"]');   // the tab is remembered, and an earlier test left it on Build
+    await T.until(() => document.querySelectorAll('#lists .lrow').length === 2);
+    assert.match(await T.text('#lists'), new RegExp(`${T.capital.name}.*${near.name}|${near.name}.*${T.capital.name}`));
+    await T.page.hover(`#lists .lrow[data-row="t:${near.id}"]`);
+    await sleep(200);
+    assert.equal(await T.page.$$eval('.badge.hot', (all) => all.map((b) => b.dataset.town).join()), String(near.id), 'the town under the pointer is lit on the map');
+    await T.page.click(`#lists .lrow[data-row="t:${near.id}"]`);
+    await sleep(300);
+    assert.equal(await T.page.$eval('#lists .lrow.sel', (el) => el.dataset.row), `t:${near.id}`, 'clicking a row selects its town');
+    await T.page.click('#tabs [data-side="armies"]');
+    assert.match(await T.text('#lists'), /1st Army.*Camped at/);
+    await T.page.hover('#lists .lrow');
+    await sleep(300);
+    assert.equal((await T.armies()).filter((a) => a.hot).length, 1, 'the army under the pointer is lit on the map');
+    await T.page.click('#lists .lrow');
+    await sleep(300);
+    assert.match(await T.text('#cmd'), /1st Army/);
+    // Towns can be sorted; right-clicking a town row sends the selected army there.
+    await T.page.click('#tabs [data-side="towns"]');
+    await T.page.click('#lbar [data-sort="units"]');
+    const held = await T.page.$$eval('#lists .lrow .nums span:first-child', (all) => all.map((el) => Number(el.textContent)));
+    assert.deepEqual(held, [...held].sort((a, b) => b - a), 'sorted by garrison, largest first');
+    await T.page.click('#lbar [data-sort="size"]');
+    await T.page.click(`#lists .lrow[data-row="t:${near.id}"]`, { button: 'right' });
+    await T.until((to) => document.querySelector('#cmd')?.innerText.toLowerCase().includes(`marching to ${to.toLowerCase()}`), near.name);
+    // Armies can be filtered by what they are doing.
+    await T.page.click('#tabs [data-side="armies"]');
+    await T.page.click('#lbar [data-filter="moving"]');
+    assert.match(await T.text('#lists'), /1st Army.*Marching to/);
+    await T.page.click('#lbar [data-filter="siege"]');
+    assert.equal((await T.page.$$('#lists .lrow')).length, 0, 'no army is besieging anything');
+    await T.page.click('#lbar [data-filter="all"]');
+    // The minimap shrinks to give the list more room, and grows back.
+    const wide = (await (await T.page.$('#mini')).boundingBox()).width;
+    await T.page.click('#mini-size');
+    assert.ok((await (await T.page.$('#mini')).boundingBox()).width < wide * 0.6, 'the minimap is small');
+    await T.page.click('#mini-size');
+    assert.equal((await (await T.page.$('#mini')).boundingBox()).width, wide);
+    await T.page.mouse.move(400, 400);
+    await sleep(200);
+    assert.equal(await T.page.$$eval('.badge.hot', (all) => all.length), 0, 'nothing stays lit once the pointer leaves');
     await T.key('l');
     assert.equal(await T.page.evaluate(() => window.map.getLayoutProperty('cq-road-all', 'visibility')), 'visible');
     await T.key('l');
@@ -212,7 +276,7 @@ const tests = {
     await T.key('u');
     await sleep(500);
     assert.equal((await T.live()).towns[target.id].owner, 1);
-    await T.page.click('#new');
+    await T.page.click('#keys'); await T.page.click('#new');
     await sleep(200);
     await T.page.select('#setup [name=rivals]', '2');
     await T.page.select('#setup [name=size]', 'small');

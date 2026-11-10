@@ -1,5 +1,6 @@
 import * as maplibregl from '/vendor/maplibre-gl.mjs';
 import { buildStyle } from '/style.js';
+import { artReady, picture, startArt } from '/game/art.js';
 
 // The page for Conquer. The server runs the game; this draws it and sends commands.
 
@@ -31,6 +32,7 @@ try { showRoads = localStorage.getItem('conquer-roads') === 'on'; } catch { /* s
 let fcMarker = null;    // the forecast shown at the target
 const cycle = {};       // alert kind → which of its places was shown last
 let hovered = null;
+let hot = { town: null, army: null };   // what the pointer is on in the sidebar lists, or which of your towns on the map
 let cmdKey = '', panelKey = '';
 let details = false;    // whether the roads-and-amounts panel is open
 let boxed = false;
@@ -246,6 +248,8 @@ function addOverlay() {
   map.addLayer({ id: 'cq-name', type: 'symbol', source: 'cq-labels',
     layout: { ...text, 'text-field': ['get', 'name'], 'text-size': ['+', 12.5, ['*', 2, ['get', 'tier']]], 'text-anchor': 'bottom', 'text-offset': [0, -0.1] },
     paint: { 'text-color': '#1c2530', 'text-halo-color': '#ffffffe6', 'text-halo-width': 1.8 } });
+  map.addLayer({ id: 'cq-group-hot', type: 'circle', source: 'cq-groups', filter: ['==', ['get', 'hot'], 1],
+    paint: { 'circle-radius': 20, 'circle-color': '#f5b301', 'circle-opacity': 0.35, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } });
   map.addLayer({ id: 'cq-group-ring', type: 'circle', source: 'cq-groups', filter: ['==', ['get', 'selected'], 1],
     paint: { 'circle-radius': 14, 'circle-color': '#f5b301', 'circle-opacity': 0.9 } });
   // Armies: a white rim normally, gold while besieging, grey and faded in retreat.
@@ -443,13 +447,13 @@ function drawBadges() {
         startDrag({ town: t.id }, e);
       });
       el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); if (canOrder() && !(selTowns.length === 1 && selTowns[0] === t.id)) order(t.id, e.shiftKey); });
-      el.addEventListener('mouseenter', () => { hover(t.id); showCard(t, el); });
-      el.addEventListener('mouseleave', () => { hover(null); $('card').style.display = 'none'; });
+      el.addEventListener('mouseenter', () => { hover(t.id); showCard(t, el); if (mine(t.id)) setHot({ town: t.id }); });
+      el.addEventListener('mouseleave', () => { hover(null); $('card').style.display = 'none'; setHot({}); });
       b = { el, key: '', marker: new maplibregl.Marker({ element: holder, anchor: 'top', offset: [0, 3] }).setLngLat(toLngLat(t.x, t.y)).addTo(map) };
       badges.set(t.id, b);
     }
     const s = state(t.id), { html, title } = badgeHtml(t);
-    const cls = `badge${selTowns.includes(t.id) ? ' sel' : ''}${mine(t.id) && (s.besieged || threatsTo(t.id).length) ? ' threat' : ''}${small ? ' small' : ''}`;
+    const cls = `badge${selTowns.includes(t.id) ? ' sel' : ''}${mine(t.id) && (s.besieged || threatsTo(t.id).length) ? ' threat' : ''}${small ? ' small' : ''}${hot.town === t.id ? ' hot' : ''}`;
     const key = cls + html + s.owner;
     if (key === b.key) continue;
     b.key = key;
@@ -481,7 +485,7 @@ function drawArmies() {
   map.getSource('cq-groups').setData(collection(live.armies.map((a) => {
     const [x, y] = armyPoint(a, ahead);
     return { type: 'Feature', geometry: { type: 'Point', coordinates: toLngLat(x, y) },
-      properties: { id: a.id, color: colorOf(a.owner), label: String(total(a)), heavy: (a.vehicle || 0) + (a.artillery || 0) > 0 ? 1 : 0, stars: '★'.repeat(a.stars || 0), name: a.owner === PLAYER ? a.name : '', selected: a.id === selArmy || selMany.includes(a.id) ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
+      properties: { id: a.id, color: colorOf(a.owner), label: String(total(a)), heavy: (a.vehicle || 0) + (a.artillery || 0) > 0 ? 1 : 0, stars: '★'.repeat(a.stars || 0), name: a.owner === PLAYER ? a.name : '', selected: a.id === selArmy || selMany.includes(a.id) ? 1 : 0, hot: a.id === hot.army ? 1 : 0, mood: a.siege ? 'siege' : a.retreating ? 'retreat' : 'ok' } };
   })));
 }
 function frame() { drawArmies(); requestAnimationFrame(frame); }
@@ -618,7 +622,7 @@ function startMap() {
   window.map = map;
   lockMap();
   map.on('resize', lockMap);
-  map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'top-left');
+  map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'bottom-left');
   map.on('style.load', addOverlay);
   map.on('zoomend', drawBadges);
   map.on('move', drawMini);
@@ -1063,6 +1067,12 @@ function drawMini() {
     g.fillRect(x - 3, y - 3, 6, 6);
     g.strokeRect(x - 3, y - 3, 6, 6);
   }
+  // Whatever the pointer is on in the sidebar lists is ringed here too, so it can be found when it is off screen.
+  const lit = hot.town ? town(hot.town) : null, litArmy = hot.army !== null ? army(hot.army) : null;
+  const at = lit ? to(lit.x, lit.y) : litArmy ? to(...armyPoint(litArmy)) : null;
+  if (at) {
+    for (const [colour, width] of [['#1f2933', 5], ['#ffd84a', 2.5]]) { g.strokeStyle = colour; g.lineWidth = width; g.beginPath(); g.arc(at[0], at[1], 11, 0, Math.PI * 2); g.stroke(); }
+  }
   // The part of the map on screen.
   const v = map.getBounds(), [vx0, vy0] = toMetres(v.getWest(), v.getSouth()), [vx1, vy1] = toMetres(v.getEast(), v.getNorth());
   const [a0, b1] = to(vx0, vy0), [a1, b0] = to(vx1, vy1);
@@ -1145,19 +1155,24 @@ function tray(units, owner, selectable) {
   if (!cards.length) return '<div class="tray empty">No units</div>';
   return `<div class="tray">${cards.map((c, i) => `<button class="unit ${selectable ? (pickAll || picked.has(i) ? 'in' : 'out') : 'fixed'}" style="--c:${colorOf(owner)}"
     ${selectable ? `data-card="${i}"` : 'disabled'} title="${c.n > 1 ? `${c.n} ` : ''}${game.rules.units[c.kind].name}${selectable ? ' — click to pick just this one, Ctrl-click to add or remove, double-click for all of this kind' : ''}">
-    ${UI[c.kind]}${c.n > 1 ? `<span class="n">${c.n}</span>` : ''}</button>`).join('')}</div>`;
+    ${artReady ? picture(c.kind, colorOf(owner)) : UI[c.kind]}${c.n > 1 ? `<span class="n">${c.n}</span>` : ''}</button>`).join('')}</div>`;
 }
 
 /** One square action. Icon and number carry the meaning; `title` holds the sentence. */
-function slot({ key, icon, does, title, price, caption, disabled = false, cls = '', meter = '', badge = '', pips = null, at = '', corner = '' }) {
+function slot({ key, icon, art = null, does, title, price, caption, disabled = false, cls = '', meter = '', badge = '', pips = null, at = '', corner = '' }) {
   const shown = key ? `<kbd>${key.toUpperCase()}</kbd>` : '';
   const dots = pips ? `<span class="pips">${Array.from({ length: pips[1] }, (_, i) => `<i class="${i < pips[0] ? 'on' : ''}"></i>`).join('')}</span>` : '';
   return `<div class="cell"><button class="slot ${cls}" data-do="${does}" ${at ? `data-town="${at}"` : ''} ${key ? `data-key="${key}"` : ''} ${disabled ? 'disabled' : ''} title="${esc(title)}">
-    ${shown}<span class="ico">${icon}</span><span class="sr">${esc(title)}</span>${meter ? `<span class="wipe" data-meter="${meter}"></span>` : ''}${badge ? `<span class="count">${badge}</span>` : ''}${dots}</button>
+    ${shown}${art ?? `<span class="ico">${icon}</span>`}<span class="sr">${esc(title)}</span>${meter ? `<span class="wipe" data-meter="${meter}"></span>` : ''}${badge ? `<span class="count">${badge}</span>` : ''}${dots}</button>
     <span class="cap">${price != null ? `<b>${price}</b>` : ''}${caption ? esc(caption) : ''}</span>${corner}</div>`;
 }
 const chip = (icon, text, title, color = '') => `<span class="chip" title="${esc(title)}" ${color ? `style="color:${color}"` : ''}>${icon}<b>${text}</b></span>`;
-const who = (title, sub, owner, chips = '') => `<div class="who" style="--c:${colorOf(owner)}"><h2>${title}</h2><div class="sub">${sub}</div><div class="chips">${chips}</div></div>`;
+/** A picture for a slot or tile, or null (so the plain icon shows) when pictures cannot be drawn. */
+const art = (kind, extra = '') => (artReady ? `<span class="ico art">${picture(kind, colorOf(PLAYER), extra)}</span>` : null);
+/** Who is selected: a portrait when there is one, then the name, a line about it, and its numbers. */
+const who = (title, sub, owner, chips = '', portrait = null) => `<div class="who" style="--c:${colorOf(owner)}">${artReady && portrait ? `<div class="face">${picture(portrait[0], colorOf(owner), portrait[1] ?? '')}</div>` : ''}
+  <div class="about"><h2>${title}</h2><div class="sub">${sub}</div><div class="chips">${chips}</div></div></div>`;
+const townFace = (t) => ['town', `${t.tier}${t.traits.hill ? 'h' : ''}${t.traits.river ? 'r' : ''}${t.traits.port ? 'p' : ''}`];
 
 function cmdHtml() {
   const cash = live.me.money, rules = game.rules;
@@ -1167,9 +1182,9 @@ function cmdHtml() {
     const own = myArmy(a), free = camped(a), n = total(a);
     const where = a.siege ? `besieging ${town(a.at).name}` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`;
     const chips = chip(UI.shield, (attackPower(a) * veteran(a)).toFixed(1), `Attack strength${a.stars ? `, including +${a.stars * 10}% for experience` : ''}`)
-      + (a.stars ? chip('', '★'.repeat(a.stars), `${a.stars} of ${rules.experience.max} stars: one for each fight won, each adding ${rules.experience.perStar * 100}% strength`, '#b7791f') : '')
-      + (a.siege ? chip(UI.fort, `${Math.round(100 * a.siege.progress / a.siege.need)}%`, `Siege: ${Math.round(a.siege.need - a.siege.progress)} s until the walls are breached`, '#d97706') : '');
-    let html = who(esc(a.name), `${own ? '' : `${esc(faction(a.owner).name)} · `}${esc(where)}`, a.owner, chips);
+      + (a.stars ? chip('', '★'.repeat(a.stars), `${a.stars} of ${rules.experience.max} stars: one for each fight won, each adding ${rules.experience.perStar * 100}% strength`, '#e3b341') : '')
+      + (a.siege ? chip(UI.fort, `${Math.round(100 * a.siege.progress / a.siege.need)}%`, `Siege: ${Math.round(a.siege.need - a.siege.progress)} s until the walls are breached`, '#f59e0b') : '');
+    let html = who(esc(a.name), `${own ? '' : `${esc(faction(a.owner).name)} · `}${esc(where)}`, a.owner, chips, ['army']);
     const going = free ? total(pickedOf(a)) : n;
     html += `<div class="mid"><div class="pick"><span><b>${free ? going : n}</b>${free ? ` of ${n} selected` : ` unit${n > 1 ? 's' : ''}`}</span>
       ${free && n > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
@@ -1184,7 +1199,7 @@ function cmdHtml() {
     if (free) {
       html += slot({ key: 'x', icon: UI.split, does: 'split', caption: 'Split', disabled: pickAll || !going || going >= n, title: 'Pick some of its cards, then split them off as a new army' });
       if (total(state(a.at).garrison)) html += slot({ key: 'j', icon: UI.merge, does: 'reinforce', caption: 'Take all', badge: total(state(a.at).garrison), title: `Add the whole garrison of ${town(a.at).name} to this army` });
-      html += slot({ key: 'v', icon: UI.fort, does: 'garrison', caption: 'Stand down', title: `Dissolve the army into the garrison of ${town(a.at).name}` });
+      html += slot({ key: 'v', icon: UI.fort, does: 'garrison', caption: 'Disband', title: `Stand down: dissolve the army into the garrison of ${town(a.at).name}` });
     }
     html += slot({ key: 'n', icon: UI.flag, does: 'rename', caption: 'Rename', title: 'Give this army a name' });
     return `${html}</div>`;
@@ -1193,7 +1208,7 @@ function cmdHtml() {
     const list = selMany.map(army).filter(Boolean);
     const sum = Object.fromEntries(game.unitKinds.map((k) => [k, list.reduce((n, a) => n + (a[k] || 0), 0)]));
     const together = list.every((a) => a.at && a.at === list[0].at && !a.siege);
-    return who(`${list.length} armies`, list.map((a) => esc(a.name)).join(', '), PLAYER, chip(UI.shield, attackPower(sum).toFixed(0), 'Combined attack strength'))
+    return who(`${list.length} armies`, list.map((a) => esc(a.name)).join(', '), PLAYER, chip(UI.shield, attackPower(sum).toFixed(0), 'Combined attack strength'), ['army'])
       + `<div class="mid"><div class="pick"><span><b>${total(sum)}</b> units</span><span class="tip">right-click a town to send them all</span></div>${tray(sum, PLAYER, false)}</div>
       <div class="slots">${slot({ key: 's', icon: UI.go, does: 'mode:redirect', cls: mode === 'redirect' ? 'on' : '', caption: mode === 'redirect' ? 'click a town' : 'March', title: 'Send all these armies to a town' })}
       ${together ? slot({ key: 'g', icon: UI.merge, does: 'mergemany', caption: 'Merge', badge: list.length, title: 'Combine these armies into one' }) : ''}</div>`;
@@ -1223,7 +1238,7 @@ function cmdHtml() {
   if (!own) {
     const strength = s.visible ? defencePower(s.garrison, s.defence).toFixed(1) : '?';
     return who(esc(t.name), `${TIERS[t.tier]} · ${ownerName(s.owner)}`, Math.max(0, s.owner),
-      chip(UI.shield, strength, `Defence strength (defenders × ${s.defence.toFixed(2)})`, '#5b6672') + traits)
+      chip(UI.shield, strength, `Defence strength (defenders × ${s.defence.toFixed(2)})`, '#aab4bf') + traits, townFace(t))
       + `<div class="mid">${s.visible ? tray(s.force, Math.max(0, s.owner), false) : '<div class="tray empty">Defenders unknown — out of sight</div>'}
         <div class="tip">Drag one of your towns or armies here to attack${s.siege ? `; it needs a ${Math.round(s.siege)} s siege` : ''}</div></div>`
       + (s.bribe != null ? `<div class="slots">${slot({ key: 'u', icon: UI.coin, does: 'bribe', price: s.bribe, caption: '', disabled: live.me.money < s.bribe,
@@ -1231,11 +1246,11 @@ function cmdHtml() {
   }
   const units = pickedUnits(id), going = total(units), all = total(s.garrison);
   let html = who(esc(t.name), `${TIERS[t.tier]}${live.me.capital === id ? ' · capital' : ''}`, PLAYER,
-    chip(UI.coin, `+${Math.round(s.income)}`, `Earns ${Math.round(s.income)} a minute${s.supplied ? '' : ' — halved, cut off from your capital'}`, s.supplied ? '#8a6d1c' : '#d97706')
-    + chip(UI.shield, s.strength.toFixed(1), `Defence strength: garrison and camped armies × ${s.defence.toFixed(2)}`, '#5b6672') + traits);
+    chip(UI.coin, `+${Math.round(s.income)}`, `Earns ${Math.round(s.income)} a minute${s.supplied ? '' : ' — halved, cut off from your capital'}`, s.supplied ? '#e3b341' : '#f59e0b')
+    + chip(UI.shield, s.strength.toFixed(1), `Defence strength: garrison and camped armies × ${s.defence.toFixed(2)}`, '#aab4bf') + traits, townFace(t));
   const here = armiesAt(id).filter((a) => a.owner === PLAYER);
   const banners = here.length ? `<div class="banners">${here.map((a) => `<button class="banner" data-army="${a.id}" title="Select ${esc(a.name)}">${UI.flag}<b>${esc(a.name)}</b> ${total(a)}</button>`).join('')}</div>` : '';
-  html += `<div class="mid">${banners}<div class="pick"><span>${all ? `<b>${going}</b> of ${all} in the garrison selected` : 'Garrison'}</span>
+  html += `<div class="mid">${banners}<div class="pick"><span title="Units of the garrison picked to move">${all ? `<b>${going}</b> of ${all} selected` : 'Garrison'}</span>
       ${all > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
       ${all ? `<span class="tip">drag or right-click to send</span>` : ''}</div>${tray(s.garrison, PLAYER, true)}</div><div class="slots">`;
   const callable = game.graph.roads.some((r) => (r.a === id || r.b === id) && !cutState(r.id) && mine(r.a === id ? r.b : r.a) && total(state(r.a === id ? r.b : r.a).garrison));
@@ -1244,13 +1259,13 @@ function cmdHtml() {
   for (const [kind, rule] of Object.entries(rules.buildings)) {
     const b = s.buildings[kind], icon = kind === 'barracks' ? UI.base : UI.factory, key = BUILD_KEY[kind];
     const makes = rule.trains.map((u) => rules.units[u].name.toLowerCase()).join(' and ');
-    if (!b) html += slot({ key, icon, does: `build:${kind}`, price: rule.cost, cls: 'empty', disabled: cash < rule.cost, title: `Build ${rule.name.toLowerCase()} — lets you train ${makes}` });
-    else if (!b.done) html += slot({ key, icon, does: 'none', caption: 'building', disabled: true, meter: `${id}|${kind}`, title: `${rule.name} under construction` });
+    if (!b) html += slot({ key, icon, art: art(kind), does: `build:${kind}`, price: rule.cost, cls: 'empty', disabled: cash < rule.cost, title: `Build ${rule.name.toLowerCase()} — lets you train ${makes}` });
+    else if (!b.done) html += slot({ key, icon, art: art(kind), does: 'none', caption: 'building', disabled: true, meter: `${id}|${kind}`, title: `${rule.name} under construction` });
     else {
       for (const u of rule.trains) {
         const unit = rules.units[u], line = b.lines[u], k = UNIT_KEY[u];
         const what = u === 'scout' ? ' Fast, sees a long way, hardly fights.' : u === 'artillery' ? ' Slow; five times the attack against towns, and speeds up sieges.' : '';
-        html += slot({ key: k, icon: UI[u], does: `train:${u}`, price: unit.cost, cls: cash < unit.cost ? 'poor' : '', meter: `${id}|${kind}|${u}`, badge: line.queue || '',
+        html += slot({ key: k, icon: UI[u], art: art(u), does: `train:${u}`, price: unit.cost, cls: cash < unit.cost ? 'poor' : '', meter: `${id}|${kind}|${u}`, badge: line.queue || '',
           title: `Train ${unit.name.toLowerCase()} — click to queue one, Shift-click for five, right-click to cancel one.${what}${line.queue ? ` ${line.queue} in training.` : ''}`,
           corner: `<button class="mini repeat ${line.repeat ? 'on' : ''}" data-do="repeat:${u}" data-key="${k.toUpperCase()}" title="Keep training ${unit.name.toLowerCase()} while there is money (Shift+${k.toUpperCase()})">${UI.repeat}</button>` });
       }
@@ -1259,7 +1274,7 @@ function cmdHtml() {
   html += '<span class="gap"></span>';
   [['market', 'm', UI.market], ['fort', 'f', UI.fort]].forEach(([kind, key, icon]) => {
     const rule = rules.upgrades[kind], level = kind === 'market' ? s.market : s.fort, top = level >= rules.maxLevel;
-    html += slot({ key: top ? '' : key, icon, does: top ? 'none' : `upgrade:${kind}`, price: top ? null : s.costs[kind], caption: top ? 'max' : '', pips: [level, rules.maxLevel],
+    html += slot({ key: top ? '' : key, icon, art: art(kind), does: top ? 'none' : `upgrade:${kind}`, price: top ? null : s.costs[kind], caption: top ? 'max' : '', pips: [level, rules.maxLevel],
       disabled: top || cash < s.costs[kind], title: `${rule.name} level ${level} of ${rules.maxLevel}: each level adds ${rule.perLevel * 100}% ${rule.effect}` });
   });
   html += '<span class="gap"></span>';
@@ -1288,6 +1303,23 @@ function panelHtml() {
   return `<h3>Roads from ${esc(town(id).name)}</h3>${roadRows(game.graph.roads.filter((r) => r.a === id || r.b === id), id)}`;
 }
 
+/** Unit cards are as large as one row allows. When a single row would make them smaller than two rows would, they go to two rows. */
+function sizeTray() {
+  const tray = $('cmd').querySelector('.tray:not(.empty)');
+  if (!tray) return;
+  const GAP = 5, PAD = 6, SMALLEST = 28, n = tray.children.length;
+  const others = [...tray.parentElement.children].filter((el) => el !== tray);
+  const high = $('cmd').clientHeight - 20 - others.reduce((h, el) => h + el.offsetHeight + GAP, 0) - PAD;
+  const wide = tray.clientWidth - PAD;
+  const fit = (perRow) => Math.floor((wide - GAP * (perRow - 1)) / perRow);
+  const twoRows = Math.floor((high - GAP) / 2);
+  const oneRow = Math.min(high, fit(n));
+  const size = oneRow >= twoRows ? oneRow : Math.max(SMALLEST, Math.min(twoRows, fit(Math.ceil(n / 2))));
+  tray.style.setProperty('--card', `${size}px`);
+  tray.style.maxHeight = `${high + PAD}px`;
+}
+addEventListener('resize', sizeTray);
+
 function renderUi(force) {
   const s = selTowns.length === 1 ? state(selTowns[0]) : null;
   // Rebuild only when something other than a progress bar changes, so clicks are never lost mid-press.
@@ -1301,13 +1333,14 @@ function renderUi(force) {
     s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, Object.values(b.lines).map((l) => [l.queue, l.repeat])])]);
   if (force || key !== cmdKey) {
     cmdKey = key;
-    const html = cmdHtml();
-    $('cmd').innerHTML = html;
-    $('cmd').style.display = html ? 'flex' : 'none';
+    // The command bar is always there; with nothing selected it says how to pick something.
+    $('cmd').innerHTML = cmdHtml() || `<div class="idle"><b>Nothing selected</b><span>Click a town or an army</span><span><kbd>Tab</kbd> next one waiting for orders</span><span><kbd>H</kbd> capital</span><span><kbd>Shift</kbd> + drag to box-select</span></div>`;
+    sizeTray();
     const side = panelHtml();
     if (force || side !== panelKey) { panelKey = side; $('panel').innerHTML = side; $('panel').style.display = side ? 'block' : 'none'; }
   }
   drawProduction();
+  drawLists();
   // Progress shows as a clock wipe over the icon: the shaded part is what is left to do.
   for (const m of document.querySelectorAll('[data-meter]')) {
     const [id, kind, unit] = m.dataset.meter.split('|');
@@ -1316,6 +1349,171 @@ function renderUi(force) {
     m.style.display = idle ? 'none' : 'block';
     if (!idle) m.style.setProperty('--p', (100 * (unit ? line.training : b.progress)).toFixed(1));
   }
+}
+
+// ----- Sidebar lists -----
+// Under the minimap: your towns, your armies, or production, one at a time.
+
+let sideTab = 'towns';
+try { sideTab = ['towns', 'armies', 'prod'].includes(localStorage.getItem('conquer-side')) ? localStorage.getItem('conquer-side') : 'towns'; } catch { /* storage unavailable */ }
+function showSide(tab) {
+  sideTab = tab;
+  try { localStorage.setItem('conquer-side', tab); } catch { /* fine */ }
+  setHot({});
+  listsKey = '';
+  if (live) drawLists();
+}
+
+/** Light up a town or an army: its row in the lists, its badge or marker on the map, and a ring on the minimap. */
+function setHot({ town: t = null, army: a = null }) {
+  if (t === hot.town && a === hot.army) return;
+  badges.get(hot.town)?.el.classList.remove('hot');
+  hot = { town: t, army: a };
+  badges.get(t)?.el.classList.add('hot');
+  markHot();
+  drawMini();
+}
+function markHot() {
+  const want = hot.town ? `t:${hot.town}` : hot.army !== null ? `a:${hot.army}` : '';
+  for (const el of $('lists').querySelectorAll('.lrow')) el.classList.toggle('hot', el.dataset.row === want);
+}
+
+const armyDoing = (a) => (a.siege ? `Besieging ${town(a.at).name}` : a.retreating ? `Retreating to ${town(a.to).name}` : a.at ? `Camped at ${town(a.at).name}` : `Marching to ${town(a.to).name}`);
+const leading = (u) => game.unitKinds.reduce((best, k) => ((u[k] || 0) > (u[best] || 0) ? k : best), game.unitKinds[0]);
+
+// How each list is arranged. Towns are sorted; armies are filtered by what they are doing.
+const TOWN_SORTS = { size: 'Size', income: 'Income', units: 'Garrison', danger: 'Danger' };
+const ARMY_FILTERS = { all: 'All', idle: 'Idle', moving: 'Moving', siege: 'Sieging' };
+const armyIs = { all: () => true, idle: (a) => camped(a), moving: (a) => !a.at, siege: (a) => !!a.siege };
+let townSort = 'size', armyFilter = 'all';
+try {
+  if (TOWN_SORTS[localStorage.getItem('conquer-town-sort')]) townSort = localStorage.getItem('conquer-town-sort');
+  if (ARMY_FILTERS[localStorage.getItem('conquer-army-filter')]) armyFilter = localStorage.getItem('conquer-army-filter');
+} catch { /* storage unavailable */ }
+/** How urgently a town needs looking at: under siege, then an enemy on the way, then cut off. */
+const dangerOf = (t) => { const s = state(t.id); return s.besieged ? 3 : threatsTo(t.id).length ? 2 : !s.supplied ? 1 : 0; };
+
+function barHtml() {
+  if (sideTab === 'towns') return `<span>Sort</span>${Object.entries(TOWN_SORTS).map(([k, label]) => `<button data-sort="${k}" class="${k === townSort ? 'on' : ''}" title="${k === 'size' ? 'Capital first, then the largest towns' : k === 'income' ? 'Richest first' : k === 'units' ? 'Largest garrison first' : 'Towns in trouble first, then the most lightly held'}">${label}</button>`).join('')}`;
+  const own = live.armies.filter(myArmy);
+  return Object.entries(ARMY_FILTERS).map(([k, label]) => `<button data-filter="${k}" class="${k === armyFilter ? 'on' : ''}" title="${k === 'all' ? 'Every army' : k === 'idle' ? 'Camped in a town of yours, waiting for orders' : k === 'moving' ? 'On the road, marching or retreating' : 'Besieging a town'}">${label} <b>${own.filter(armyIs[k]).length}</b></button>`).join('');
+}
+
+function townRows() {
+  const capitalFirst = (p, q) => (q.id === live.me.capital) - (p.id === live.me.capital);
+  const garrison = (t) => total(state(t.id).garrison);
+  const by = {
+    size: (p, q) => capitalFirst(p, q) || q.tier - p.tier,
+    income: (p, q) => (state(q.id).income ?? 0) - (state(p.id).income ?? 0),
+    units: (p, q) => garrison(q) - garrison(p),
+    danger: (p, q) => dangerOf(q) - dangerOf(p) || garrison(p) - garrison(q),
+  }[townSort];
+  const own = game.graph.towns.filter((t) => mine(t.id)).sort((p, q) => by(p, q) || p.name.localeCompare(q.name));
+  if (!own.length) return '<p class="hint">You hold no towns.</p>';
+  const income = own.reduce((n, t) => n + Math.round(state(t.id).income ?? 0), 0), units = own.reduce((n, t) => n + total(state(t.id).garrison), 0);
+  return `<div class="sum"><span><b>${own.length}</b> of ${game.graph.towns.length} towns, <b>${live.goal}</b> to win</span><span><b>${units}</b> units · <b>+${income}</b> a minute</span></div>` + own.map((t) => {
+    const s = state(t.id), threat = s.besieged || threatsTo(t.id).length > 0, camps = armiesAt(t.id).filter(myArmy).length;
+    const works = [['barracks', ICON.base], ['factory', ICON.factory]].map(([kind, icon]) => { const b = s.buildings?.[kind]; return b ? `<span class="${b.done ? '' : 'dim'}" title="${esc(game.rules.buildings[kind].name)}${b.done ? '' : ' (building)'}">${icon}</span>` : ''; }).join('');
+    const extras = `${s.market ? `${ICON.market}${s.market}` : ''}${s.fort ? ` ${ICON.fort}${s.fort}` : ''}`;
+    const trouble = s.besieged ? '<span class="bad">under siege</span>' : threat ? '<span class="bad">enemy approaching</span>' : !s.supplied ? '<span class="bad">cut off</span>' : '';
+    return `<button class="lrow ${selTowns.includes(t.id) ? 'sel' : ''} ${threat ? 'alarm' : ''}" data-row="t:${t.id}" style="--c:${colorOf(PLAYER)}" title="${esc(t.name)}: click to select and go there, Ctrl-click to add to the selection, right-click to send what is selected here">
+      <span class="thumb">${artReady ? picture(...townFace(t).slice(0, 1), colorOf(PLAYER), townFace(t)[1]) : ICON.shield}</span>
+      <span class="txt"><span class="name">${esc(t.name)}${t.id === live.me.capital ? ' <i title="Your capital">★</i>' : ''}</span>
+        <span class="sub">${trouble || `${TIERS[t.tier]} ${works}${extras}${camps ? ` · ${camps} ${camps > 1 ? 'armies' : 'army'}` : ''}`}</span></span>
+      <span class="nums"><span title="Units in the garrison">${ICON.shield}${total(s.garrison)}</span><span class="coin" title="Income a minute">+${Math.round(s.income ?? 0)}</span></span></button>`;
+  }).join('');
+}
+
+function armyRows() {
+  const own = live.armies.filter(myArmy);
+  if (!own.length) return '<p class="hint">No armies yet. Send units out of a town, or muster them, to form one.</p>';
+  const shown = own.filter(armyIs[armyFilter]);
+  return `<div class="sum"><span><b>${own.length}</b> ${own.length > 1 ? 'armies' : 'army'}, <b>${own.reduce((n, a) => n + total(a), 0)}</b> units</span><span>upkeep <b>${own.reduce((n, a) => n + upkeepOf(a), 0)}</b> a minute</span></div>`
+    + (shown.length ? '' : `<p class="hint">No army of yours is ${armyFilter === 'idle' ? 'waiting for orders' : armyFilter === 'moving' ? 'on the road' : 'besieging a town'}.</p>`) + shown.map((a) => {
+    const kind = leading(a), pc = a.siege ? Math.floor((20 * a.siege.progress) / a.siege.need) * 5 : null;
+    const mix = game.unitKinds.filter((k) => a[k]).map((k) => `${a[k]} ${game.rules.units[k].name.toLowerCase()}`).join(', ');
+    return `<button class="lrow ${a.id === selArmy || selMany.includes(a.id) ? 'sel' : ''}" data-row="a:${a.id}" style="--c:${colorOf(PLAYER)}" title="${esc(`${a.name}: ${mix}. Click to select and go there, Ctrl-click to add to the selection`)}">
+      <span class="thumb">${artReady ? picture(kind, colorOf(PLAYER)) : UI[kind]}</span>
+      <span class="txt"><span class="name">${esc(a.name)}${a.stars ? ` <i title="Experience">${'★'.repeat(a.stars)}</i>` : ''}</span>
+        <span class="sub ${a.retreating ? 'bad' : ''}">${esc(armyDoing(a))}${pc !== null ? ` · ${pc}%` : ''}</span></span>
+      <span class="nums"><span title="Units">${UI[kind]}${total(a)}</span><span class="atk" title="Attack strength">⚔ ${Math.round(attackPower(a))}</span></span>
+      ${pc !== null ? `<span class="bar" style="--p:${pc}"><i></i></span>` : ''}</button>`;
+  }).join('');
+}
+
+let listsKey = '', barKey = '';
+function drawLists() {
+  const towns = game.graph.towns.filter((t) => mine(t.id)), armies = live.armies.filter(myArmy);
+  const alarm = towns.some((t) => state(t.id).besieged || threatsTo(t.id).length);
+  $('n-towns').textContent = towns.length;
+  $('n-towns').className = alarm ? 'alarm' : '';
+  $('n-armies').textContent = armies.length || '';
+  $('n-prod').textContent = towns.reduce((n, t) => n + Object.values(state(t.id).buildings ?? {}).reduce((m, b) => m + Object.values(b.lines ?? {}).reduce((q, l) => q + (l.queue || 0), 0), 0), 0) || '';
+  for (const b of $('tabs').children) { b.classList.toggle('on', b.dataset.side === sideTab); b.setAttribute('aria-selected', b.dataset.side === sideTab); }
+  $('prod').style.display = sideTab === 'prod' ? '' : 'none';
+  $('lists').style.display = sideTab === 'prod' ? 'none' : 'block';
+  $('lbar').style.display = sideTab === 'prod' ? 'none' : 'flex';
+  if (sideTab === 'prod') return;
+  const bar = barHtml();
+  if (bar !== barKey) { barKey = bar; $('lbar').innerHTML = bar; }
+  const html = sideTab === 'towns' ? townRows() : armyRows();
+  const key = sideTab + artReady + html;
+  if (key === listsKey) return;
+  listsKey = key;
+  $('lists').innerHTML = html;
+  markHot();
+}
+$('tabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-side]'); if (b) showSide(b.dataset.side); });
+{
+  const rowOf = (e) => { const el = e.target.closest?.('.lrow'); if (!el) return null; const [what, id] = el.dataset.row.split(':'); return what === 't' ? { town: id } : { army: Number(id) }; };
+  // Pointing at a town row with something selected previews the route there, as pointing at the town on the map does.
+  $('lists').addEventListener('mouseover', (e) => { const row = rowOf(e); setHot(row ?? {}); hover(row?.town ?? null); });
+  $('lists').addEventListener('mouseleave', () => { setHot({}); hover(null); });
+  // Right-click a town row to send whatever is selected there, the same as right-clicking the town on the map.
+  $('lists').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const row = rowOf(e);
+    if (!row?.town) return;
+    if (!canOrder()) return toast('Select an army or a town with units first');
+    if (selTowns.length === 1 && selTowns[0] === row.town) return;
+    order(row.town, e.shiftKey);
+  });
+  $('lbar').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.sort) { townSort = b.dataset.sort; try { localStorage.setItem('conquer-town-sort', townSort); } catch { /* fine */ } }
+    if (b.dataset.filter) { armyFilter = b.dataset.filter; try { localStorage.setItem('conquer-army-filter', armyFilter); } catch { /* fine */ } }
+    drawLists();
+    $('lists').scrollTop = 0;
+  });
+  // The minimap can be made small to give the list more room.
+  let compact = false;
+  try { compact = localStorage.getItem('conquer-mini') === 'small'; } catch { /* storage unavailable */ }
+  const size = () => {
+    $('side').classList.toggle('compact', compact);
+    $('mini-size').innerHTML = svg(compact ? '<path d="M14 10 20 4M15 4h5v5M10 14l-6 6M4 15v5h5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' : '<path d="M20 4l-6 6M14 5v5h5M4 20l6-6M5 14h5v5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>');
+    $('mini-size').title = compact ? 'Make the minimap large again' : 'Make the minimap small, for a longer list';
+  };
+  $('mini-size').addEventListener('mousedown', (e) => e.stopPropagation());
+  $('mini-size').addEventListener('click', () => { compact = !compact; try { localStorage.setItem('conquer-mini', compact ? 'small' : 'large'); } catch { /* fine */ } size(); });
+  size();
+  $('lists').addEventListener('click', (e) => {
+    const row = rowOf(e), add = e.ctrlKey || e.metaKey;
+    if (!row) return;
+    if (row.town) {
+      const t = town(row.town);
+      if (add) return clickTown(t.id, true);
+      select({ towns: [t.id] });
+      goTo(t.x, t.y);
+    } else {
+      const a = army(row.army);
+      if (!a) return;
+      const now = selArmy !== null ? [selArmy] : selMany;
+      if (add) return select({ armies: now.includes(a.id) ? now.filter((id) => id !== a.id) : [...now, a.id] });
+      select({ army: a.id });
+      goTo(...armyPoint(a));
+    }
+  });
 }
 
 // ----- Production sidebar -----
@@ -1329,15 +1527,14 @@ function drawProduction() {
     Object.values(game.rules.units).map((u) => cash >= u.cost)]);
   if (key === prodKey) return;
   prodKey = key;
-  $('prod').style.display = rows.length ? 'block' : 'none';
-  $('prod').innerHTML = '<header>Production</header>' + rows.map((t) => {
+  $('prod').innerHTML = '<header>Production</header>' + (rows.length ? '' : '<p class="hint">No base or factory yet. Select a town of yours and build one to train units.</p>') + rows.map((t) => {
     const s = state(t.id);
     const tiles = Object.entries(game.rules.buildings).flatMap(([kind, rule]) => rule.trains.map((u) => {
       const b = s.buildings[kind], unit = game.rules.units[u], line = b?.lines[u];
       if (!b?.done) return '<span class="tile none"></span>';
       return `<button class="slot tile ${cash < unit.cost ? 'poor' : ''} ${line.repeat ? 'looping' : ''}" data-do="train:${u}" data-town="${t.id}"
         title="${esc(`${unit.name} in ${t.name}, ${unit.cost} each — click to queue one, Shift-click for five, right-click to cancel one${line.repeat ? '. Repeating' : ''}`)}">
-        <span class="ico">${UI[u]}</span><span class="wipe" data-meter="${t.id}|${kind}|${u}"></span>${line.queue ? `<span class="count">${line.queue}</span>` : ''}</button>`;
+        ${art(u) ?? `<span class="ico">${UI[u]}</span>`}<span class="wipe" data-meter="${t.id}|${kind}|${u}"></span>${line.queue ? `<span class="count">${line.queue}</span>` : ''}</button>`;
     })).join('');
     return `<div class="prow ${selTowns.includes(t.id) ? 'sel' : ''}"><button class="pname" data-goto="${t.id}" title="Go to ${esc(t.name)}">${esc(t.name)}</button>${tiles}</div>`;
   }).join('');
@@ -1489,7 +1686,7 @@ document.addEventListener('keydown', (e) => {
   } else if ((k === 'z' || k === 'Z') && !$('cmd').querySelector('[data-key="z"]')) {
     // Step back to see the whole map.
     const b = game.world.boundsM;
-    map.fitBounds([toLngLat(b.minx, b.miny), toLngLat(b.maxx, b.maxy)], { duration: 500, padding: { top: 70, bottom: 130, left: 20, right: 20 } });
+    map.fitBounds([toLngLat(b.minx, b.miny), toLngLat(b.maxx, b.maxy)], { duration: 500, padding: 24 });
   } else if (k.startsWith('Arrow')) {
     e.preventDefault();
     const step = e.shiftKey ? 320 : 140, d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[k];
@@ -1506,7 +1703,9 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Everything under the top bar hangs from wherever the bar ends, which moves when it wraps onto two rows.
-new ResizeObserver(() => document.documentElement.style.setProperty('--top', `${Math.round($('bar').getBoundingClientRect().bottom + 13)}px`)).observe($('bar'));
+new ResizeObserver(() => document.documentElement.style.setProperty('--top', `${Math.round($('bar').getBoundingClientRect().bottom + 10)}px`)).observe($('bar'));
+// Right-clicking a panel never opens the browser's menu; on a training tile it cancels one, as before.
+document.addEventListener('contextmenu', (e) => { if (e.target.closest?.('.dock, #left')) e.preventDefault(); });
 
 // ----- Loading games -----
 
@@ -1577,6 +1776,7 @@ async function refreshList(selectId) {
 }
 
 function newGame() {
+  $('help').style.display = 'none';
   $('setup').style.display = 'flex';
   $('setup').querySelector('[name=name]').select();
 }
@@ -1631,6 +1831,8 @@ $('delete').addEventListener('click', async () => {
   location.search = '';
 });
 
+// Pictures first, so the panels are drawn with them from the start; without WebGL the plain icons are used.
+await startArt();
 const list = await refreshList();
 const query = new URLSearchParams(location.search);
 const wanted = query.get('game');
@@ -1646,5 +1848,5 @@ if (list.length) {
   $('games').value = id;
   play(await api(`/${id}/game`));
 } else {
-  toast('Press “New game” to begin');
+  newGame();
 }
