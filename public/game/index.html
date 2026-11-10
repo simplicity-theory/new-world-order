@@ -16,7 +16,9 @@
   kbd { font: 600 10.5px/1 ui-monospace, monospace; padding: 2px 4px; border: 1px solid #b8c0c8; border-bottom-width: 2px; border-radius: 4px; background: #fff; color: var(--ink); }
   .card { position: absolute; z-index: 2; background: var(--panel); border-radius: 8px; box-shadow: 0 1px 6px #0003; }
 
-  #bar { top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 12px; }
+  #bar { top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px 8px; align-items: center; padding: 8px 12px; }
+  #bar > button { padding: 5px 7px; }
+  #bar .stat { margin-left: 6px; }
   #bar h1 { margin: 0; font-size: 15px; letter-spacing: 0.04em; }
   #games { max-width: 190px; }
   .stat { display: flex; flex-direction: column; line-height: 1.15; }
@@ -185,7 +187,7 @@
   @media (max-width: 1180px) {
     #log { display: none; }
     #cmd { left: 12px; }
-    #to-explorer, #toggle-sound { display: none; }
+    #toggle-sound, #autoplay { display: none; }
   }
   @media (max-width: 900px) {
     #minibox { display: none; }
@@ -244,14 +246,14 @@
   <button id="open-sheet" title="Economy and armies at a glance (O)">Overview</button>
   <button id="toggle-roads" title="Show every road by class, with bridges (L)">Roads</button>
   <button id="toggle-sound" title="Sound effects on or off">Sound</button>
+  <button id="autoplay" title="Let the computer play your side while you watch; press again to take over">Auto-play</button>
   <button id="toggle-3d" title="Tilt the map and show the terrain and buildings in 3D (V when nothing is selected)">3D</button>
-  <a id="to-explorer" href="/" title="The map explorer: generate and browse worlds without the game">Map explorer</a>
   <span class="spacer"></span>
   <div class="stat"><b id="money">–</b><span id="income">money</span></div>
   <div class="stat"><b id="towns">–</b><span id="goal">towns held</span><i id="progress"><i></i></i></div>
   <div class="stat"><b id="clock">–</b><span>time played</span></div>
   <div id="speed" role="group" aria-label="Game speed">
-    <button data-speed="0" title="Pause (Space)">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button>
+    <button data-speed="0" title="Pause (Space)">❚❚</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button><button data-speed="8">8×</button><button data-speed="16" title="Fast forward">16×</button>
   </div>
 </div>
 <div id="help" class="card">
@@ -277,6 +279,7 @@
   </table>
   <label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="autopause"> Pause when one of my towns comes under siege</label>
   <label style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="safe-colors"> Colours that are easier to tell apart</label>
+  <p style="margin:8px 0 0"><a id="to-explorer" href="/" title="Generate and browse worlds without the game">Open the map explorer</a></p>
   <table style="display:none">
   </table>
 </div>
@@ -304,6 +307,7 @@
     <label>Difficulty
       <select name="difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
     <label>Seed <input name="seed" placeholder="random" maxlength="30"></label>
+    <label style="justify-content:flex-start"><input type="checkbox" name="watch" style="width:auto"> Just watch: the computer plays my side</label>
     <p class="hint">Rivals start as far from you as the map allows. A larger map takes a little longer to generate.</p>
     <div class="buttons"><button type="button" id="setup-cancel">Cancel</button><button class="primary">Start</button></div>
   </form>

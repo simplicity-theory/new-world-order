@@ -9,7 +9,7 @@ const toLngLat = (x, y) => [(x / R) * DEG, (2 * Math.atan(Math.exp(y / R)) - Mat
 const toMetres = (lng, lat) => [(lng / DEG) * R, R * Math.log(Math.tan(Math.PI / 4 + lat / DEG / 2))];
 const TIERS = ['Hamlet', 'Village', 'Town', 'City'];
 const PLAYER = 1, UNKNOWN = -1;
-const SPEEDS = [1, 2, 4, 8];
+const SPEEDS = [1, 2, 4, 8, 16];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 let map = null;
@@ -693,6 +693,7 @@ function drawHud() {
   $('progress').firstElementChild.style.width = `${Math.min(100, (100 * held) / live.goal)}%`;
   $('clock').textContent = clockText(live.clock);
   for (const b of $('speed').children) b.classList.toggle('on', Number(b.dataset.speed) === live.speed);
+  $('autoplay').classList.toggle('on', !!live.settings?.watch);
   const over = live.winner !== null && !live.dismissed;
   $('result').style.display = over ? 'flex' : 'none';
   if (over) {
@@ -834,6 +835,7 @@ $('sheet').addEventListener('click', (e) => {
 /** The next sensible thing to do, for someone finding their feet. Null once the player is clearly under way. */
 function hintNow() {
   const cap = live.me.capital, s = state(cap);
+  if (live.settings?.watch) return 'The computer is playing your side. Use 16× to fast-forward, and press Auto-play to take over at any time.';
   if (!s || s.owner !== PLAYER || live.winner !== null) return null;
   const held = game.graph.towns.filter((t) => mine(t.id)).length, armies = live.armies.filter(myArmy);
   if (held >= 3) return null;
@@ -1338,6 +1340,7 @@ $('speed').addEventListener('click', (e) => {
   if (b && game) command({ type: 'speed', value: Number(b.dataset.speed) });
 });
 $('keep').addEventListener('click', () => command({ type: 'dismiss' }));
+$('autoplay').addEventListener('click', () => { const on = !live.settings?.watch; command({ type: 'autoplay', on }); toast(on ? 'The computer is playing your side. Press Auto-play again to take over.' : 'You are back in command.'); });
 $('keys').addEventListener('click', () => { $('help').style.display = $('help').style.display === 'block' ? 'none' : 'block'; });
 
 // ----- Keyboard -----
@@ -1490,7 +1493,7 @@ $('setup-cancel').addEventListener('click', () => { $('setup').style.display = '
 $('setup').querySelector('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
-  const body = { name: form.get('name'), seed: form.get('seed') || undefined, size: form.get('size'), rivals: Number(form.get('rivals')), difficulty: form.get('difficulty') };
+  const body = { name: form.get('name'), seed: form.get('seed') || undefined, size: form.get('size'), rivals: Number(form.get('rivals')), difficulty: form.get('difficulty'), watch: form.get('watch') === 'on' };
   $('setup').style.display = 'none';
   veil('Generating the map…');
   try {

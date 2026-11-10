@@ -335,6 +335,16 @@ test('a neutral town next door can be bought instead of fought', () => {
   assert.equal((sim.view(PLAYER) as any).towns.e.bribe, sim.bribeCost('e'));
 });
 
+test("the computer can play the player's side, and hand it back", () => {
+  const sim = new Sim(newState(graph(), { rivals: 0, watch: true }));
+  sim.brain = think;
+  assert.equal(sim.faction(PLAYER).ai, true);
+  run(sim, 120);
+  assert.ok(sim.state.towns.c.buildings.barracks, 'it starts building on its own');
+  sim.command({ type: 'autoplay', on: false });
+  assert.equal(sim.faction(PLAYER).ai, false);
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

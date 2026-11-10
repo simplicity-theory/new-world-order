@@ -251,6 +251,7 @@ export async function handleConquer(
       rivals: Math.max(0, Math.min(RULES.rivals.length, Math.floor(Number(b.rivals ?? DEFAULTS.rivals)))),
       difficulty: String(b.difficulty) in RULES.difficulty ? b.difficulty as Settings['difficulty'] : DEFAULTS.difficulty,
       size: String(b.size) in RULES.sizes ? b.size as Settings['size'] : DEFAULTS.size,
+      watch: !!b.watch,
     };
     const world = await games.create(name, seed);
     // Grow from the first chunk to the starting map size.

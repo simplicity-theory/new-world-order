@@ -190,6 +190,7 @@ export function newState(raw: RawGraph, options: boolean | Partial<Settings> = t
     state.towns[t.id] = { ...state.towns[t.id], owner: f.id, garrison: none() };
   };
   claim(state.factions[PLAYER], start);
+  if (settings.watch) state.factions[PLAYER].ai = true;
   // Each rival starts in a small place as far by road from every capital already chosen as the map allows.
   const capitals = [start.id];
   for (let k = 0; k < Math.min(settings.rivals, RULES.rivals.length); k++) {
@@ -793,8 +794,13 @@ export class Sim {
 
     switch (c.type) {
       case 'speed':
-        if (![0, 1, 2, 4, 8].includes(c.value as number)) return fail('unknown speed');
+        if (![0, 1, 2, 4, 8, 16].includes(c.value as number)) return fail('unknown speed');
         s.speed = c.value as number;
+        return { ok: true };
+      case 'autoplay':
+        // Hand the player's side to the computer, or take it back.
+        me.ai = !!c.on;
+        s.settings.watch = me.ai;
         return { ok: true };
       case 'dismiss':
         s.dismissed = true;
