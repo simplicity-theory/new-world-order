@@ -316,6 +316,19 @@ test('armies go by rail between towns their side holds, and not otherwise', () =
   assert.equal(s.armies[0].at, 'e');
 });
 
+test('a neutral town next door can be bought instead of fought', () => {
+  const { sim, s, me } = game();
+  assert.equal(sim.bribeCost('d'), Math.round(4.5 * RULES.bribe.perStrength + 2 * RULES.bribe.perTier));
+  assert.deepEqual(sim.command({ type: 'bribe', town: 'd' }), { error: 'not enough money' });
+  assert.deepEqual(sim.command({ type: 'bribe', town: 'e' }), { error: 'it must be one road away from a town you hold' });
+  me.money = 1000;
+  assert.deepEqual(sim.command({ type: 'bribe', town: 'd' }), { ok: true });
+  assert.equal(s.towns.d.owner, PLAYER);
+  assert.equal(s.towns.d.garrison.infantry, 2);
+  assert.equal(me.money, 1000 - Math.round(4.5 * RULES.bribe.perStrength + 2 * RULES.bribe.perTier));
+  assert.equal((sim.view(PLAYER) as any).towns.e.bribe, sim.bribeCost('e'));
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

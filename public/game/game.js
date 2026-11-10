@@ -1127,8 +1127,10 @@ function cmdHtml() {
     const strength = s.visible ? defencePower(s.garrison, s.defence).toFixed(1) : '?';
     return who(esc(t.name), `${TIERS[t.tier]} · ${ownerName(s.owner)}`, Math.max(0, s.owner),
       chip(UI.shield, strength, `Defence strength (defenders × ${s.defence.toFixed(2)})`, '#5b6672') + traits)
-      + `<div class="mid">${s.visible ? tray(s.garrison, Math.max(0, s.owner), false) : '<div class="tray empty">Defenders unknown — out of sight</div>'}
-        <div class="tip">Select one of your towns, pick units, then right-click here to attack</div></div>`;
+      + `<div class="mid">${s.visible ? tray(s.force, Math.max(0, s.owner), false) : '<div class="tray empty">Defenders unknown — out of sight</div>'}
+        <div class="tip">Drag one of your towns or armies here to attack${s.siege ? `; it needs a ${Math.round(s.siege)} s siege` : ''}</div></div>`
+      + (s.bribe != null ? `<div class="slots">${slot({ key: 'u', icon: UI.coin, does: 'bribe', price: s.bribe, caption: '', disabled: live.me.money < s.bribe,
+        title: 'Buy the town: it comes over without a fight and half its defenders stay on as your garrison. Only for neutral towns one road from a town of yours.' })}</div>` : '');
   }
   const units = pickedUnits(id), going = total(units), all = total(s.garrison);
   let html = who(esc(t.name), `${TIERS[t.tier]}${live.me.capital === id ? ' · capital' : ''}`, PLAYER,
@@ -1194,7 +1196,7 @@ function renderUi(force) {
   const key = JSON.stringify([selTowns, selArmy, selRoad, mode, details, afford, live.roads, pickAll, [...picked], selMany.map((id) => { const a = army(id); return a && [a.id, a.at, a.infantry + a.vehicle]; }),
     g && [g.name, g.at, g.to, g.infantry, g.vehicle, g.retreating, g.siege && Math.round(100 * g.siege.progress / g.siege.need), g.at && armiesAt(g.at).length],
     selTowns.map((id) => armiesAt(id).map((a) => [a.id, a.name, a.infantry + a.vehicle])),
-    selTowns.map((id) => [state(id).owner, state(id).garrison, state(id).visible, state(id).rally, state(id).supplied, state(id).market, state(id).fort, Math.round(state(id).income ?? 0)]),
+    selTowns.map((id) => [state(id).owner, state(id).garrison, state(id).visible, state(id).bribe, state(id).force, state(id).rally, state(id).supplied, state(id).market, state(id).fort, Math.round(state(id).income ?? 0)]),
     s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, Object.values(b.lines).map((l) => [l.queue, l.repeat])])]);
   if (force || key !== cmdKey) {
     cmdKey = key;
@@ -1246,6 +1248,7 @@ function perform(does, at, many = false) {
   else if (what === 'train') { for (let k = 0; k < (many ? 5 : 1); k++) command({ type: 'train', town: id, unit: arg }); }
   else if (what === 'repeat') command({ type: 'repeat', town: id, unit: arg, on: !Object.values(state(id).buildings).find((b) => b.lines[arg])?.lines[arg].repeat });
   else if (what === 'upgrade') command({ type: 'upgrade', town: id, upgrade: arg });
+  else if (what === 'bribe') command({ type: 'bribe', town: id });
   else if (what === 'cut') command({ type: 'cut', road: does.slice(4) });
   else if (what === 'repair') command({ type: 'repair', road: does.slice(7) });
   else if (what === 'norally') command({ type: 'rally', town: id, to: null });

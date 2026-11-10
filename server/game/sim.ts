@@ -291,6 +291,11 @@ export class Sim {
       * (1 + (t.traits.port ? RULES.portBonus : 0) + (t.traits.rail ? RULES.railBonus : 0)) * (s.supplied ? 1 : RULES.cutOffShare);
   }
 
+  /** What a neutral town would take to come over without a fight: more the better defended and the bigger it is. */
+  bribeCost(id: string): number {
+    return Math.round(this.strengthOf(id) * RULES.bribe.perStrength + (this.nodes.get(id)!.tier + 1) * RULES.bribe.perTier);
+  }
+
   upgradeCost(id: string, kind: UpgradeKind): number {
     return RULES.upgrades[kind].base * (this.state.towns[id][kind] + 1) * (this.nodes.get(id)!.tier + 1);
   }
@@ -831,6 +836,20 @@ export class Sim {
         town[kind]++;
         return { ok: true };
       }
+      case 'bribe': {
+        // Buy a neutral town outright. It must be next door to a town of yours, and in sight.
+        if (!town || town.owner !== NEUTRAL) return fail('only a neutral town can be bought');
+        if (!(this.links.get(id) ?? []).some((l) => l.road.intact && s.towns[l.other].owner === who)) return fail('it must be one road away from a town you hold');
+        if (this.besiegersOf(id).length) return fail('it is under siege');
+        if (!pay(this.bribeCost(id))) return fail('not enough money');
+        // Half its defenders stay on as your garrison.
+        town.owner = who;
+        town.garrison = share(town.garrison, 0.5);
+        this.note(`${this.nodes.get(id)!.name} has come over to you.`, who, { at: [this.nodes.get(id)!.x, this.nodes.get(id)!.y], kind: 'built' });
+        this.onCapture?.(this.nodes.get(id)!, who);
+        this.refresh();
+        return { ok: true };
+      }
       case 'rally': {
         if (!mine) return fail('not your town');
         const to = typeof c.to === 'string' ? c.to : null;
@@ -973,6 +992,8 @@ export class Sim {
         force: vis ? this.forceAt(t.id) : null,
         strength: vis ? this.strengthOf(t.id) : null, breached: vis ? this.strengthOf(t.id, true) : null,
         siege: this.siegeNeed(t.id), besieged: vis && this.besiegersOf(t.id).length > 0,
+        // The price of buying it, if it is neutral, in sight and next to a town of the viewer's.
+        bribe: vis && st.owner === NEUTRAL && (this.links.get(t.id) ?? []).some((l) => l.road.intact && s.towns[l.other].owner === who) ? this.bribeCost(t.id) : null,
         defence: this.defenceOf(t.id), fort: vis ? st.fort : null,
         ...(own ? { buildings: st.buildings, market: st.market, rally: st.rally, supplied: st.supplied, income: this.incomeOf(t.id),
           costs: { market: this.upgradeCost(t.id, 'market'), fort: this.upgradeCost(t.id, 'fort') } } : {}),
