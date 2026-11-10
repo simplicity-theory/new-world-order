@@ -1,4 +1,4 @@
-import { NEUTRAL, PLAYER, RIVAL, RULES, type BuildingKind, type RoadKind, type UnitKind, type UpgradeKind } from './rules.ts';
+import { DEFAULTS, NEUTRAL, PLAYER, RULES, type BuildingKind, type RoadKind, type Settings, type UnitKind, type UpgradeKind } from './rules.ts';
 
 // The Conquer simulation: plain data in, plain data out, no files or network. One step()
 // advances everything by a slice of time; command() is the only way a player or the
@@ -61,7 +61,7 @@ export interface Report {
 }
 export interface GameEvent { id: number; clock: number; to: number; text: string; kind?: 'battle' | 'built' | 'siege'; at?: Pt; report?: Report }
 export interface State {
-  version: 3;
+  version: 4;
   clock: number;            // simulation seconds played
   speed: number;            // 0 paused, otherwise a multiplier
   factions: Faction[];
@@ -72,6 +72,11 @@ export interface State {
   events: GameEvent[];
   winner: number | null;
   dismissed: boolean;       // the player chose to keep playing after the game was decided
+  settings: Settings;
+  /** Towns held by each side over time, for the end-of-game chart. */
+  history: { clock: number; held: Record<number, number> }[];
+  /** Fights won and lost, and units lost, by each side. */
+  tally: Record<number, { won: number; lost: number; casualties: number }>;
 }
 export type Result = { ok: true } | { error: string };
 export type RawGraph = { towns: TownNode[]; roads: Omit<Road, 'length' | 'intact' | 'cutAt' | 'repair'>[] };
@@ -147,11 +152,12 @@ export function mergeGraph(state: State, raw: RawGraph): void {
   }
 }
 
-export function newState(raw: RawGraph, withRival = true): State {
+export function newState(raw: RawGraph, options: boolean | Partial<Settings> = true): State {
+  const settings: Settings = { ...DEFAULTS, ...(typeof options === 'boolean' ? { rivals: options ? 1 : 0 } : options) };
   const side = (id: number, name: string, color: string, ai: boolean): Faction =>
     ({ id, name, color, money: id === NEUTRAL ? 0 : RULES.startMoney, capital: '', ai, alive: true, seen: [], thought: 0, raised: 0 });
   const state: State = {
-    version: 3, clock: 0, speed: 1, graph: { towns: [], roads: [] }, towns: {}, armies: [], nextId: 1, events: [], winner: null, dismissed: false,
+    version: 4, clock: 0, speed: 1, graph: { towns: [], roads: [] }, towns: {}, armies: [], nextId: 1, events: [], winner: null, dismissed: false, settings, history: [], tally: {},
     factions: [side(NEUTRAL, 'Neutral', '#7d848c', false), side(PLAYER, 'You', '#1f6feb', false)],
   };
   mergeGraph(state, raw);
@@ -168,15 +174,18 @@ export function newState(raw: RawGraph, withRival = true): State {
     state.towns[t.id] = { ...state.towns[t.id], owner: f.id, garrison: none() };
   };
   claim(state.factions[PLAYER], start);
-  if (withRival) {
-    // The rival starts in a small place as far away by road as the map allows.
-    const far = sim.distances(start.id);
-    const options = towns.filter((t) => t.id !== start.id && t.tier <= 2 && (far.get(t.id) ?? 0) > 5000);
-    if (options.length) {
-      const home = options.reduce((a, b) => (far.get(b.id)! - b.tier * 4000 > far.get(a.id)! - a.tier * 4000 ? b : a));
-      state.factions.push(side(RIVAL, 'Rival', '#d1345b', true));
-      claim(state.factions[RIVAL], home);
-    }
+  // Each rival starts in a small place as far by road from every capital already chosen as the map allows.
+  const capitals = [start.id];
+  for (let k = 0; k < Math.min(settings.rivals, RULES.rivals.length); k++) {
+    const far = capitals.map((c) => sim.distances(c));
+    const reach = (t: TownNode) => Math.min(...far.map((d) => d.get(t.id) ?? 0));
+    const options = towns.filter((t) => !capitals.includes(t.id) && t.tier <= 2 && reach(t) > 5000);
+    if (!options.length) break;
+    const home = options.reduce((a, b) => (reach(b) - b.tier * 4000 > reach(a) - a.tier * 4000 ? b : a));
+    const f = side(state.factions.length, RULES.rivals[k].name, RULES.rivals[k].color, true);
+    state.factions.push(f);
+    claim(f, home);
+    capitals.push(home.id);
   }
   sim.note(`You hold ${start.name}. Build an infantry base to begin.`, PLAYER, { at: [start.x, start.y] });
   sim.refresh();
@@ -252,6 +261,12 @@ export class Sim {
   }
   private earn(a: Army): void {
     a.stars = Math.min(RULES.experience.max, (a.stars ?? 0) + 1);
+  }
+  /** Keep score of a fight for the end-of-game summary. */
+  private score(winner: number, loser: number, winnerLost: number, loserLost: number): void {
+    const of = (id: number) => (this.state.tally[id] ??= { won: 0, lost: 0, casualties: 0 });
+    of(winner).won++; of(winner).casualties += winnerLost;
+    of(loser).lost++; of(loser).casualties += loserLost;
   }
 
   /** Money a town earns per minute for whoever holds it. A besieged town earns nothing. */
@@ -429,6 +444,7 @@ export class Sim {
       this.disband(army);
       const escaped = this.retreatFrom(away, army.owner, id, army.name);
       const left = escaped ? away : none();
+      this.score(before, army.owner, count(defenders) - count(this.forceAt(id)), count(attackers) - count(left));
       this.note(`Attack on ${node.name} failed${escaped ? `; ${escaped} of ${count(attackers)} got away` : `: all ${count(attackers)} lost`}.`, army.owner, { at, kind: 'battle', report: report('att', left, this.forceAt(id)) });
       if (before !== NEUTRAL) this.note(`${node.name} held against an attack.`, before, { at, kind: 'battle', report: report('def', left, this.forceAt(id)) });
       return;
@@ -448,13 +464,19 @@ export class Sim {
     const escaped = this.retreatFrom(fled, before, id);
     const defLeft = escaped ? fled : none();
     const lost = count(attackers) - count(survivors);
+    this.score(army.owner, before, lost, count(defenders) - count(defLeft));
     this.note(`${node.name} captured${lost ? `, ${lost} lost` : ''}.`, army.owner, { at, kind: 'battle', report: report('att', survivors, defLeft) });
     if (before !== NEUTRAL) this.note(`${node.name} has fallen${escaped ? `; ${escaped} of its defenders are retreating` : ''}.`, before, { at, kind: 'battle', report: report('def', survivors, defLeft) });
-    // Losing a capital ends the game for that side.
-    const loser = s.factions.find((f) => f.id !== NEUTRAL && f.capital === id && f.id !== army.owner);
+    // Losing its capital finishes a side: its towns go their own way and its armies scatter.
+    const loser = s.factions.find((f) => f.id !== NEUTRAL && f.capital === id && f.id !== army.owner && f.alive);
     if (loser) {
       loser.alive = false;
-      if (s.winner === null) s.winner = army.owner;
+      for (const t of Object.values(s.towns)) if (t.owner === loser.id) { t.owner = NEUTRAL; t.rally = null; for (const b of Object.values(t.buildings)) { b.queue = 0; b.repeat = false; } }
+      for (const a of [...s.armies]) if (a.owner === loser.id) this.disband(a);
+      for (const f of s.factions) if (f.id !== NEUTRAL && f.id !== loser.id && f.alive) this.note(`The ${loser.name} has fallen: ${node.name}, its capital, was taken.`, f.id, { at });
+      const left = s.factions.filter((f) => f.id !== NEUTRAL && f.alive);
+      // The game is decided when the player is out, or only one side is left.
+      if (s.winner === null && (loser.id === PLAYER || left.length === 1)) s.winner = army.owner;
     }
     this.onCapture?.(node, army.owner);
   }
@@ -535,6 +557,7 @@ export class Sim {
       return { kind: 'field', place, won: mine === winner, you: { before: isA ? ua : ub, after: only(mine), power: isA ? pa : pb },
         them: { owner: (isA ? b : a).owner, before: isA ? ub : ua, after: only(isA ? b : a), power: isA ? pb : pa } };
     };
+    this.score(winner.owner, loser.owner, count(winner === a ? ua : ub) - count(winner), count(loser === a ? ua : ub) - count(loser));
     this.note(`${winner.name} won a fight ${place}.`, winner.owner, { at, kind: 'battle', report: side(winner) });
     this.note(`${loser.name} was beaten ${place}${count(loser) ? ` and is retreating with ${count(loser)}` : ' and destroyed'}.`, loser.owner, { at, kind: 'battle', report: side(loser) });
   }
@@ -549,7 +572,9 @@ export class Sim {
     for (const f of s.factions) {
       if (f.id === NEUTRAL || !f.alive) continue;
       let perMinute = -this.upkeepOf(f.id);
-      for (const t of s.graph.towns) if (s.towns[t.id].owner === f.id) perMinute += this.incomeOf(t.id);
+      // Computer-run sides earn more or less according to the difficulty chosen.
+      const tuned = f.ai ? RULES.difficulty[s.settings?.difficulty ?? 'normal'].income : 1;
+      for (const t of s.graph.towns) if (s.towns[t.id].owner === f.id) perMinute += this.incomeOf(t.id) * tuned;
       f.money = Math.max(0, f.money + (perMinute * dt) / 60);
     }
 
@@ -642,6 +667,15 @@ export class Sim {
       if (f.ai && f.alive && this.brain && s.clock - f.thought >= 3) { f.thought = s.clock; this.brain(this, f); }
     }
 
+    // A record of who held how much, for the chart at the end.
+    const lastSample = s.history[s.history.length - 1];
+    if (!lastSample || s.clock - lastSample.clock >= RULES.historyEvery) {
+      const held: Record<number, number> = {};
+      for (const t of Object.values(s.towns)) held[t.owner] = (held[t.owner] ?? 0) + 1;
+      s.history.push({ clock: Math.round(s.clock), held });
+      if (s.history.length > 600) s.history = s.history.filter((_, i) => i % 2 === 0);
+    }
+
     // Victory by share of the map.
     if (s.winner === null) {
       for (const f of s.factions) {
@@ -650,6 +684,12 @@ export class Sim {
         if (held >= Math.ceil(s.graph.towns.length * RULES.winShare)) s.winner = f.id;
       }
     }
+  }
+
+  private heldNow(): Record<number, number> {
+    const held: Record<number, number> = {};
+    for (const t of Object.values(this.state.towns)) held[t.owner] = (held[t.owner] ?? 0) + 1;
+    return held;
   }
 
   /** Recompute which towns are joined to their capital, and what each side has seen. */
@@ -892,7 +932,9 @@ export class Sim {
       armies: s.armies.filter((a) => a.owner === who || (a.at ? visible.has(a.at) : this.canSee(who, this.position(a)))),
       roads: s.graph.roads.filter((r) => !r.intact).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
       events: s.events.filter((e) => e.to === who).slice(-40),
-      winner: s.winner, dismissed: s.dismissed,
+      winner: s.winner, dismissed: s.dismissed, settings: s.settings,
+      // The record is only sent once the game is decided, when it is no longer a secret.
+      summary: s.winner !== null ? { history: [...s.history, { clock: Math.round(s.clock), held: this.heldNow() }], tally: s.tally } : null,
       goal: Math.ceil(s.graph.towns.length * RULES.winShare),
     };
   }

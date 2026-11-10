@@ -602,9 +602,11 @@ function drawHud() {
   $('result').style.display = over ? 'flex' : 'none';
   if (over) {
     $('result-title').textContent = live.winner === PLAYER ? 'Victory' : 'Defeat';
+    const rivals = live.factions.filter((f) => f.id > PLAYER);
     $('result-text').textContent = live.winner === PLAYER
-      ? (faction(2)?.alive === false ? 'You took the rival capital.' : `You hold ${held} of ${game.graph.towns.length} towns.`)
-      : (mine(live.me.capital) ? 'The rival holds most of the map.' : 'Your capital has fallen.');
+      ? (rivals.length && rivals.every((f) => !f.alive) ? 'Every rival capital has fallen.' : `You hold ${held} of ${game.graph.towns.length} towns.`)
+      : (mine(live.me.capital) ? `The ${faction(live.winner)?.name ?? 'rival'} holds most of the map.` : 'Your capital has fallen.');
+    drawSummary();
   }
 }
 
@@ -1253,16 +1255,49 @@ async function refreshList(selectId) {
   return list;
 }
 
-async function newGame() {
-  const name = prompt('Name for the new game', 'Campaign');
-  if (name === null) return;
-  veil('Generating a 528 km² map…');
+function newGame() {
+  $('setup').style.display = 'flex';
+  $('setup').querySelector('[name=name]').select();
+}
+$('setup-cancel').addEventListener('click', () => { $('setup').style.display = 'none'; });
+$('setup').querySelector('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const body = { name: form.get('name'), seed: form.get('seed') || undefined, size: form.get('size'), rivals: Number(form.get('rivals')), difficulty: form.get('difficulty') };
+  $('setup').style.display = 'none';
+  veil('Generating the map…');
   try {
-    const full = await api('', { method: 'POST', body: { name } });
+    const full = await api('', { method: 'POST', body });
     await refreshList(full.world.id);
     play(full);
   } catch (err) { toast(`Could not start: ${err.message}`); }
   veil('');
+});
+
+/** The end-of-game chart: towns held by each side over time, and the tally of fights. */
+function drawSummary() {
+  const sum = live.summary;
+  if (!sum) return;
+  const c = $('chart'), g = c.getContext('2d'), pad = 28;
+  g.clearRect(0, 0, c.width, c.height);
+  const sides = live.factions.filter((f) => f.id !== 0);
+  const end = Math.max(1, sum.history[sum.history.length - 1]?.clock ?? 1), top = Math.max(2, ...sum.history.flatMap((h) => sides.map((f) => h.held[f.id] ?? 0)), live.goal);
+  const X = (t) => pad + ((c.width - pad - 8) * t) / end, Y = (n) => c.height - pad - ((c.height - pad - 10) * n) / top;
+  g.strokeStyle = '#cfd6dd'; g.lineWidth = 1; g.fillStyle = '#5b6672'; g.font = '20px system-ui, sans-serif';
+  g.beginPath(); g.moveTo(pad, 6); g.lineTo(pad, c.height - pad); g.lineTo(c.width - 6, c.height - pad); g.stroke();
+  g.setLineDash([6, 6]); g.beginPath(); g.moveTo(pad, Y(live.goal)); g.lineTo(c.width - 6, Y(live.goal)); g.stroke(); g.setLineDash([]);
+  g.fillText(String(live.goal), 2, Y(live.goal) + 7);
+  g.fillText(clockText(end), c.width - 60, c.height - 4);
+  for (const f of sides) {
+    g.strokeStyle = f.color; g.lineWidth = 4; g.lineJoin = 'round';
+    g.beginPath();
+    sum.history.forEach((h, i) => { const x = X(h.clock), y = Y(h.held[f.id] ?? 0); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+    g.stroke();
+  }
+  $('tally').innerHTML = '<tr><th></th><th>Towns</th><th>Fights won</th><th>Lost</th><th>Units lost</th></tr>' + sides.map((f) => {
+    const t = sum.tally[f.id] ?? { won: 0, lost: 0, casualties: 0 }, held = sum.history[sum.history.length - 1]?.held[f.id] ?? 0;
+    return `<tr><td style="color:${f.color}">${esc(f.name)}${f.alive ? '' : ' (defeated)'}</td><td>${held}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.casualties}</td></tr>`;
+  }).join('');
 }
 
 $('games').addEventListener('change', async (e) => play(await api(`/${e.target.value}/game`)));

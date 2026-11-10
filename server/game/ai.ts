@@ -7,7 +7,6 @@ import { attackPower, type Faction, type Sim, type Units } from './sim.ts';
 // neighbouring town when it can do so with a margin. It does not cut roads, and it knows
 // what defends each town without having to see it.
 
-const MARGIN = 1.3;
 const count = (u: Units): number => u.infantry + u.vehicle;
 
 export function think(sim: Sim, f: Faction): void {
@@ -15,6 +14,7 @@ export function think(sim: Sim, f: Faction): void {
   const mine = s.graph.towns.filter((t) => s.towns[t.id].owner === f.id);
   if (!mine.length) return;
   const act = (c: Record<string, unknown>) => 'ok' in sim.command(c, f.id);
+  const MARGIN = RULES.difficulty[s.settings?.difficulty ?? 'normal'].margin;
 
   // Armies that have come to rest in its own towns stand down, so every town's garrison is its whole force.
   for (const a of [...s.armies]) {
@@ -55,6 +55,21 @@ export function think(sim: Sim, f: Faction): void {
     for (const h of helpers) {
       if (attackPower(spare(h.id)) + sortie > enemy * 1.1) { act({ type: 'move', from: h.id, to: t.id, ...spare(h.id) }); busy.add(h.id); break; }
     }
+  }
+
+  // Roads: when an army too strong to stop is still more than one road away from a town of its own, it cuts
+  // the last road in, preferring a bridge. Roads it has cut are mended once the danger has passed.
+  const hunted = new Set<string>();
+  for (const a of s.armies) {
+    if (a.owner === f.id || a.at || a.retreating || s.towns[a.to]?.owner !== f.id || a.leg >= a.path.length - 1) continue;
+    hunted.add(a.to);
+    if (attackPower(a) <= sim.strengthOf(a.to, sim.siegeNeed(a.to) > 0)) continue;
+    const last = sim.roads.get(a.path[a.path.length - 1].road)!;
+    if (last.intact && f.money >= (last.bridges.length ? RULES.roads.cutBridge : RULES.roads.cut) + 50) act({ type: 'cut', road: last.id });
+  }
+  for (const r of s.graph.roads) {
+    if (r.intact || r.repair >= 0 || hunted.has(r.a) || hunted.has(r.b)) continue;
+    if ((s.towns[r.a].owner === f.id || s.towns[r.b].owner === f.id) && f.money >= (r.bridges.length ? RULES.roads.repairBridge : RULES.roads.repair) + 300) act({ type: 'repair', road: r.id });
   }
 
   // War: each garrison looks at the towns one road away.

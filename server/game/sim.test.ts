@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { think } from './ai.ts';
-import { NEUTRAL, PLAYER, RIVAL, RULES } from './rules.ts';
+import { NEUTRAL, PLAYER, RULES } from './rules.ts';
+
+const RIVAL = 2;
 import { Sim, attackPower, defencePower, fight, newState, share, speedOn, type RawGraph } from './sim.ts';
 
 // A small hand-made map: five towns in a line, A–B–C–D–E, 4 km apart, plus a back road A–C.
@@ -381,6 +383,43 @@ test('taking the rival capital wins; holding most of the map wins', () => {
   for (const id of ['b', 'd']) b.s.towns[id].owner = PLAYER;
   b.sim.step(0.2);
   assert.equal(b.s.winner, PLAYER); // 3 of 5 towns is 60%
+});
+
+test('with several rivals, beating one does not end the game; its towns turn neutral', () => {
+  // A longer line of towns, so that taking a capital does not also win by share of the map.
+  const big = graph();
+  big.towns.push(town('f', 12000), town('g', 16000), town('h', 20000));
+  big.roads.push(road('e', 'f', 8000, 12000), road('f', 'g', 12000, 16000), road('g', 'h', 16000, 20000));
+  const sim = new Sim(newState(big, { rivals: 2 }));
+  const s = sim.state;
+  assert.equal(s.factions.length, 4);
+  const [first, second] = [s.factions[2], s.factions[3]];
+  assert.notEqual(first.capital, second.capital);
+  const next = sim.links.get(first.capital)![0].other;
+  const extra = big.towns.map((t) => t.id).find((id) => id !== 'c' && id !== next && id !== first.capital && id !== second.capital)!;
+  give(sim, extra, first.id, 1);
+  // March on the first rival's capital from next door.
+  give(sim, next, PLAYER, 40);
+  sim.command({ type: 'move', from: next, to: first.capital, infantry: 40 });
+  run(sim, 200);
+  assert.equal(first.alive, false);
+  assert.equal(s.winner, null);
+  assert.equal(s.towns[extra].owner, NEUTRAL);
+  assert.ok(s.tally[PLAYER].won >= 1);
+  assert.ok(s.history.length >= 2);
+});
+
+test('the rival cuts the road in front of an army it cannot stop', () => {
+  const { sim, s } = game(true);
+  sim.brain = think;
+  const home = sim.faction(RIVAL).capital, far = home === 'a' ? 'c' : 'c';
+  sim.faction(RIVAL).money = 1000;
+  s.towns.c.garrison.infantry = 60;
+  sim.command({ type: 'move', from: 'c', to: home, infantry: 60 });
+  assert.equal(s.armies[0].path.length, 2, far);
+  run(sim, 10);
+  const last = s.graph.roads.find((r) => r.id === s.armies[0].path[1]?.road || (r.a === home || r.b === home) && !r.intact);
+  assert.ok(s.graph.roads.some((r) => (r.a === home || r.b === home) && !r.intact), `a road into the capital should be cut (${last?.id})`);
 });
 
 test('the rival builds up, expands, and keeps a guard at home', () => {

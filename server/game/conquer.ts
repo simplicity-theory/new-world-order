@@ -4,7 +4,7 @@ import { CHUNK } from '../gen/chunk.ts';
 import { run } from '../pool.ts';
 import { Store, type Side, type World } from '../store.ts';
 import { think } from './ai.ts';
-import { PLAYER, RULES } from './rules.ts';
+import { DEFAULTS, PLAYER, RULES, type Settings } from './rules.ts';
 import { Sim, UNIT_KINDS, mergeGraph, newState, type RawGraph, type State, type TownNode } from './sim.ts';
 import { sight, territory, type Territory } from './territory.ts';
 
@@ -35,12 +35,12 @@ export class Game {
     this.sim.onCapture = (town, by) => { if (by === PLAYER) this.grow(town); };
   }
 
-  static async open(world: World): Promise<Game> {
+  static async open(world: World, settings?: Settings): Promise<Game> {
     world.db.exec('CREATE TABLE IF NOT EXISTS game (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL, updated TEXT)');
     const row = world.db.prepare('SELECT state FROM game WHERE id = 1').get() as { state: string } | undefined;
     const saved = row ? JSON.parse(row.state) as State : null;
     // Games saved by an earlier version of the rules start again on the same map.
-    const game = new Game(world, saved?.version === 3 ? saved : newState(await Game.graph(world)));
+    const game = new Game(world, saved?.version === 4 ? saved : newState(await Game.graph(world), settings ?? saved?.settings ?? DEFAULTS));
     game.save();
     return game;
   }
@@ -183,12 +183,12 @@ export class Game {
 
 const loaded = new Map<string, Promise<Game>>();
 
-function gameFor(id: string): Promise<Game> | null {
+function gameFor(id: string, settings?: Settings): Promise<Game> | null {
   let g = loaded.get(id);
   if (!g) {
     const world = games.get(id);
     if (!world) return null;
-    g = Game.open(world);
+    g = Game.open(world, settings);
     loaded.set(id, g);
     g.catch(() => loaded.delete(id));
   }
@@ -209,13 +209,18 @@ export async function handleConquer(
     const b = await body();
     const name = String(b.name || 'Campaign').slice(0, 60);
     const seed = String(b.seed || Math.random().toString(36).slice(2, 10));
+    const settings: Settings = {
+      rivals: Math.max(0, Math.min(RULES.rivals.length, Math.floor(Number(b.rivals ?? DEFAULTS.rivals)))),
+      difficulty: String(b.difficulty) in RULES.difficulty ? b.difficulty as Settings['difficulty'] : DEFAULTS.difficulty,
+      size: String(b.size) in RULES.sizes ? b.size as Settings['size'] : DEFAULTS.size,
+    };
     const world = await games.create(name, seed);
     // Grow from the first chunk to the starting map size.
-    const [w, h] = RULES.startChunks;
+    const [w, h] = RULES.sizes[settings.size];
     await world.expand(((w - 1) / 2) * (CHUNK / 1000), ['e', 'w']);
     await world.expand(Math.floor((h - 1) / 2) * (CHUNK / 1000), ['s']);
     await world.expand(Math.ceil((h - 1) / 2) * (CHUNK / 1000), ['n']);
-    const game = await gameFor(world.meta.id)!;
+    const game = await gameFor(world.meta.id, settings)!;
     json(res, 201, game.full());
     return true;
   }

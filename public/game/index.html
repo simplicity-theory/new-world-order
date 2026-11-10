@@ -162,6 +162,18 @@
   #result { position: absolute; inset: 0; z-index: 4; display: none; align-items: center; justify-content: center; background: #1f293366; }
   #result .card { position: static; padding: 22px 28px; text-align: center; }
   #result h2 { margin: 0; font-size: 26px; letter-spacing: 0.04em; }
+  #chart { display: block; width: 420px; height: 160px; margin: 6px auto 10px; }
+  #tally { margin: 0 auto 14px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #tally th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 2px 10px; font-weight: 600; }
+  #tally td { padding: 3px 10px; text-align: right; }
+  #tally td:first-child { text-align: left; font-weight: 600; }
+  #setup { position: absolute; inset: 0; z-index: 6; display: none; align-items: center; justify-content: center; background: #1f293366; }
+  #setup form { position: static; width: 320px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+  #setup h2 { margin: 0 0 4px; font-size: 18px; }
+  #setup label { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); }
+  #setup label input, #setup label select { width: 190px; }
+  #setup .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+  #setup p { margin: 0; }
 
   /* Town badges on the map. */
   .badge { display: flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 10px; border: 2px solid var(--c, #7d848c); background: #fffffff2;
@@ -234,12 +246,29 @@
   <div id="sheet-body"></div>
 </div>
 <div id="toast" class="card"></div>
+<div id="setup">
+  <form class="card">
+    <h2>New game</h2>
+    <label>Name <input name="name" value="Campaign" maxlength="60" required></label>
+    <label>Map
+      <select name="size"><option value="small">Small — 14 × 16 km</option><option value="medium" selected>Medium — 22 × 24 km</option><option value="large">Large — 30 × 32 km</option></select></label>
+    <label>Rivals
+      <select name="rivals"><option value="0">None</option><option value="1" selected>One</option><option value="2">Two</option><option value="3">Three</option></select></label>
+    <label>Difficulty
+      <select name="difficulty"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
+    <label>Seed <input name="seed" placeholder="random" maxlength="30"></label>
+    <p class="hint">Rivals start as far from you as the map allows. A larger map takes a little longer to generate.</p>
+    <div class="buttons"><button type="button" id="setup-cancel">Cancel</button><button class="primary">Start</button></div>
+  </form>
+</div>
 <div id="veil"></div>
 <div id="box"></div>
 <div id="result">
   <div class="card">
     <h2 id="result-title"></h2>
     <p id="result-text"></p>
+    <canvas id="chart" width="840" height="320" aria-label="Towns held by each side over time"></canvas>
+    <table id="tally"></table>
     <button id="keep">Keep playing</button> <button id="again" class="primary">New game</button>
   </div>
 </div>
