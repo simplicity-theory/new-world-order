@@ -1073,12 +1073,12 @@ function tray(units, owner, selectable) {
 }
 
 /** One square action. Icon and number carry the meaning; `title` holds the sentence. */
-function slot({ key, icon, does, title, price, caption, disabled = false, cls = '', meter = '', badge = '', pips = null, at = '' }) {
+function slot({ key, icon, does, title, price, caption, disabled = false, cls = '', meter = '', badge = '', pips = null, at = '', corner = '' }) {
   const shown = key ? `<kbd>${key.toUpperCase()}</kbd>` : '';
   const dots = pips ? `<span class="pips">${Array.from({ length: pips[1] }, (_, i) => `<i class="${i < pips[0] ? 'on' : ''}"></i>`).join('')}</span>` : '';
   return `<div class="cell"><button class="slot ${cls}" data-do="${does}" ${at ? `data-town="${at}"` : ''} ${key ? `data-key="${key}"` : ''} ${disabled ? 'disabled' : ''} title="${esc(title)}">
     ${shown}<span class="ico">${icon}</span><span class="sr">${esc(title)}</span>${meter ? `<span class="wipe" data-meter="${meter}"></span>` : ''}${badge ? `<span class="count">${badge}</span>` : ''}${dots}</button>
-    <span class="cap">${price != null ? `<b>${price}</b>` : ''}${caption ? esc(caption) : ''}</span></div>`;
+    <span class="cap">${price != null ? `<b>${price}</b>` : ''}${caption ? esc(caption) : ''}</span>${corner}</div>`;
 }
 const chip = (icon, text, title, color = '') => `<span class="chip" title="${esc(title)}" ${color ? `style="color:${color}"` : ''}>${icon}<b>${text}</b></span>`;
 const who = (title, sub, owner, chips = '') => `<div class="who" style="--c:${colorOf(owner)}"><h2>${title}</h2><div class="sub">${sub}</div><div class="chips">${chips}</div></div>`;
@@ -1172,8 +1172,8 @@ function cmdHtml() {
         const unit = rules.units[u], line = b.lines[u], k = UNIT_KEY[u];
         const what = u === 'scout' ? ' Fast, sees a long way, hardly fights.' : u === 'artillery' ? ' Slow; five times the attack against towns, and speeds up sieges.' : '';
         html += slot({ key: k, icon: UI[u], does: `train:${u}`, price: unit.cost, cls: cash < unit.cost ? 'poor' : '', meter: `${id}|${kind}|${u}`, badge: line.queue || '',
-          title: `Train ${unit.name.toLowerCase()} — click to queue one, Shift-click for five, right-click to cancel one.${what}${line.queue ? ` ${line.queue} in training.` : ''}` });
-        html += `<button class="mini repeat ${line.repeat ? 'on' : ''}" data-do="repeat:${u}" data-key="${k.toUpperCase()}" title="Keep training ${unit.name.toLowerCase()} while there is money (Shift+${k.toUpperCase()})">${UI.repeat}</button>`;
+          title: `Train ${unit.name.toLowerCase()} — click to queue one, Shift-click for five, right-click to cancel one.${what}${line.queue ? ` ${line.queue} in training.` : ''}`,
+          corner: `<button class="mini repeat ${line.repeat ? 'on' : ''}" data-do="repeat:${u}" data-key="${k.toUpperCase()}" title="Keep training ${unit.name.toLowerCase()} while there is money (Shift+${k.toUpperCase()})">${UI.repeat}</button>` });
       }
     }
   }
