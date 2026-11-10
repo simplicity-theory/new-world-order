@@ -4,7 +4,8 @@
   "scripts": {
     "start": "node server/main.ts",
     "dev": "node --watch server/main.ts",
-    "test": "node --test server/game/"
+    "test": "node --test server/game/",
+    "test:browser": "node test/browser/run.mjs"
   },
   "type": "module",
   "dependencies": {
@@ -14,6 +15,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "puppeteer-core": "^25.16.0",
     "typescript": "^7.0.2"
   }
 }

@@ -88,6 +88,8 @@ export class Game {
   command(c: Record<string, unknown>) {
     // For automated tests only: with CONQUER_DEBUG set, a 'debug' command can hand out money and units and alter towns.
     if (c.type === 'debug' && process.env.CONQUER_DEBUG) {
+      // `as` runs an ordinary command on behalf of another side, e.g. to make a rival attack.
+      if (typeof c.as === 'number' && c.command) { const r = this.sim.command(c.command as Record<string, unknown>, c.as); this.send('tick', this.live()); return r; }
       const s = this.sim.state, t = typeof c.town === 'string' ? s.towns[c.town] : undefined;
       if (typeof c.money === 'number') this.sim.faction(PLAYER).money = c.money;
       if (t && typeof c.owner === 'number') t.owner = c.owner;
