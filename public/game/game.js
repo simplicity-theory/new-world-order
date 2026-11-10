@@ -735,7 +735,7 @@ $('log-toggle').addEventListener('click', () => {
 // The whole economy and every army in two sortable tables. Click a row to go there.
 
 let sheetTab = null;                     // 'economy', 'armies', or null when closed
-const sheetSort = { economy: ['income', -1], armies: ['units', -1] };
+const sheetSort = { economy: ['income', -1], armies: ['units', -1], rivals: ['known', -1] };
 const upkeepOf = (u) => game.unitKinds.reduce((n, k) => n + (u?.[k] || 0) * game.rules.units[k].upkeep, 0);
 
 function sheetTable(tab, cols, rows, foot = '') {
@@ -761,6 +761,15 @@ function sheetHtml() {
     const income = rows.reduce((n, r) => n + r.income, 0), upkeep = rows.reduce((n, r) => n + r.upkeep, 0);
     return sheetTable('economy', cols, rows, `<tfoot><tr><td colspan="3">Armies in the field</td><td class="num"></td><td class="num">${armyUpkeep}</td><td class="num">−${armyUpkeep}</td></tr>
       <tr><td colspan="3">Total a minute</td><td class="num">${income}</td><td class="num">${upkeep + armyUpkeep}</td><td class="num">${income - upkeep - armyUpkeep}</td></tr></tfoot>`);
+  }
+  if (sheetTab === 'rivals') {
+    const rivals = live.factions.filter((f) => f.id > PLAYER);
+    if (!rivals.length) return '<p class="hint">You have this map to yourself.</p>';
+    const mineHeld = own.length;
+    const rows = rivals.map((f) => { const c = f.capital ? town(f.capital) : null; return { pick: c ? { towns: [c.id] } : { towns: [live.me.capital] }, name: f.name, color: f.color, alive: f.alive, known: f.known, inView: f.inView, capital: c ? c.name : 'not found yet' }; });
+    const cols = [{ key: 'name', label: 'Side', show: (r) => `<b style="color:${r.color}">${esc(r.name)}</b>${r.alive ? '' : ' <span class="tag bad">defeated</span>'}` },
+      { key: 'capital', label: 'Capital' }, { key: 'known', label: 'Towns you know of', num: true }, { key: 'inView', label: 'Units in view', num: true }];
+    return `${sheetTable('rivals', cols, rows)}<p class="hint">You hold ${mineHeld} of ${game.graph.towns.length} towns; ${live.goal} wins. You only know of a rival's towns once you have seen them, and can count its units only in towns in view now. Taking a rival's capital knocks it out.</p>`;
   }
   const status = (a) => (a.siege ? `besieging ${town(a.at).name} (${Math.round(10 * a.siege.progress / a.siege.need) * 10}%)` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`);
   const armies = live.armies.filter(myArmy).map((a) => { return { pick: { army: a.id }, name: a.name, units: a.infantry + a.vehicle, infantry: a.infantry, vehicle: a.vehicle, strength: attackPower(a), status: status(a), upkeep: upkeepOf(a) }; });

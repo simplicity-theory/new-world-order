@@ -31,6 +31,8 @@ export const RULES = {
     artillery: { motorway: 28, primary: 22, secondary: 16, tertiary: 9, rail: 60 },
   },
   maxQueue: 20,
+  /** Money seized on taking a town, by tier. */
+  loot: [40, 80, 180, 400],
   /** A neutral town that has lost defenders gets one back this often (seconds), up to what it started with. */
   neutralRecover: 45,
   /** Defenders in a town nobody owns, by tier. */

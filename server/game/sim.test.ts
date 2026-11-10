@@ -113,6 +113,7 @@ test('an army that takes a town camps there as an army', () => {
   assert.equal(s.armies[0].name, '1st Army');
   run(sim, 4000 / speedOn({ infantry: 1, vehicle: 0 }, 'secondary') + 1);
   assert.equal(s.towns.d.owner, PLAYER);
+  assert.ok(s.events.some((e) => e.text.includes(`${RULES.loot[1]} seized`)), 'taking a town brings loot');
   assert.deepEqual(s.towns.d.garrison, empty());
   assert.equal(s.armies.length, 1);
   assert.equal(s.armies[0].at, 'd');

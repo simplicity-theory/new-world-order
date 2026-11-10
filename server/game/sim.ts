@@ -499,7 +499,9 @@ export class Sim {
     const defLeft = escaped ? fled : none();
     const lost = count(attackers) - count(survivors);
     this.score(army.owner, before, lost, count(defenders) - count(defLeft));
-    this.note(`${node.name} captured${lost ? `, ${lost} lost` : ''}.`, army.owner, { at, kind: 'battle', report: report('att', survivors, defLeft) });
+    const loot = RULES.loot[node.tier];
+    this.faction(army.owner).money += loot;
+    this.note(`${node.name} captured${lost ? `, ${lost} lost` : ''}; ${loot} seized.`, army.owner, { at, kind: 'battle', report: report('att', survivors, defLeft) });
     if (before !== NEUTRAL) this.note(`${node.name} has fallen${escaped ? `; ${escaped} of its defenders are retreating` : ''}.`, before, { at, kind: 'battle', report: report('def', survivors, defLeft) });
     // Losing its capital finishes a side: its towns go their own way and its armies scatter.
     const loser = s.factions.find((f) => f.id !== NEUTRAL && f.capital === id && f.id !== army.owner && f.alive);
@@ -978,7 +980,10 @@ export class Sim {
     }
     return {
       clock: s.clock, speed: s.speed, me: { id: me.id, money: me.money, capital: me.capital, income, upkeep: this.upkeepOf(who) },
-      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, capital: seen.has(f.capital) ? f.capital : null })),
+      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, capital: seen.has(f.capital) ? f.capital : null,
+        // What is known of each side: the towns of theirs you have seen, and the units in those in view now.
+        known: s.graph.towns.filter((t) => seen.has(t.id) && s.towns[t.id].owner === f.id).length,
+        inView: s.graph.towns.filter((t) => visible.has(t.id) && s.towns[t.id].owner === f.id).reduce((n, t) => n + count(this.forceAt(t.id)), 0) })),
       towns,
       armies: s.armies.filter((a) => a.owner === who || (a.at ? visible.has(a.at) : this.canSee(who, this.position(a)))),
       roads: s.graph.roads.filter((r) => !r.intact).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
