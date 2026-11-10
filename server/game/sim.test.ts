@@ -362,6 +362,23 @@ test('gather calls in neighbouring garrisons, which join the garrison here', () 
   assert.equal(s.towns.e.garrison.infantry, 9);
 });
 
+test('a truce stops both sides attacking each other until it runs out', () => {
+  const { sim, s, me } = game(true);
+  const home = sim.faction(RIVAL).capital, near = home === 'a' ? 'b' : 'd';
+  give(sim, near, PLAYER, 20);
+  me.money = 1000;
+  assert.equal(sim.truceCost(RIVAL), RULES.truce.min);
+  assert.deepEqual(sim.command({ type: 'truce', with: RIVAL }), { ok: true });
+  assert.equal(me.money, 1000 - RULES.truce.min);
+  assert.equal(sim.atPeace(PLAYER, RIVAL), true);
+  assert.deepEqual(sim.command({ type: 'move', from: near, to: home, infantry: 20 }), { error: 'you have a truce with them' });
+  s.towns[home].garrison.infantry = 5;
+  assert.deepEqual(sim.command({ type: 'move', from: home, to: near, infantry: 5 }, RIVAL), { error: 'you have a truce with them' });
+  run(sim, RULES.truce.lasts + 1);
+  assert.equal(sim.atPeace(PLAYER, RIVAL), false);
+  assert.deepEqual(sim.command({ type: 'move', from: near, to: home, infantry: 20 }), { ok: true });
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);

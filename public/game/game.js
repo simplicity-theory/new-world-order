@@ -785,12 +785,14 @@ function sheetHtml() {
       <tr><td colspan="3">Total a minute</td><td class="num">${income}</td><td class="num">${upkeep + armyUpkeep}</td><td class="num">${income - upkeep - armyUpkeep}</td></tr></tfoot>`);
   }
   if (sheetTab === 'rivals') {
+    const rules = game.rules;
     const rivals = live.factions.filter((f) => f.id > PLAYER);
     if (!rivals.length) return '<p class="hint">You have this map to yourself.</p>';
     const mineHeld = own.length;
-    const rows = rivals.map((f) => { const c = f.capital ? town(f.capital) : null; return { pick: c ? { towns: [c.id] } : { towns: [live.me.capital] }, name: f.name, temper: f.temper ?? '', color: colorOf(f.id), alive: f.alive, known: f.known, inView: f.inView, capital: c ? c.name : 'not found yet' }; });
+    const rows = rivals.map((f) => { const c = f.capital ? town(f.capital) : null; return { pick: c ? { towns: [c.id] } : { towns: [live.me.capital] }, name: f.name, id: f.id, truce: f.truce, truceCost: f.truceCost, temper: f.temper ?? '', color: colorOf(f.id), alive: f.alive, known: f.known, inView: f.inView, capital: c ? c.name : 'not found yet' }; });
     const cols = [{ key: 'name', label: 'Side', show: (r) => `<b style="color:${r.color}">${esc(r.name)}</b>${r.alive ? '' : ' <span class="tag bad">defeated</span>'}` }, { key: 'temper', label: 'Temper' },
-      { key: 'capital', label: 'Capital' }, { key: 'known', label: 'Towns you know of', num: true }, { key: 'inView', label: 'Units in view', num: true }];
+      { key: 'capital', label: 'Capital' }, { key: 'known', label: 'Towns you know of', num: true }, { key: 'inView', label: 'Units in view', num: true },
+      { key: 'truce', label: 'Truce', show: (r) => (!r.alive ? '' : r.truce ? `until ${clockText(r.truce)}` : `<button data-truce="${r.id}" ${live.me.money < r.truceCost ? 'disabled' : ''} title="Pay for ${Math.round(rules.truce.lasts / 60)} minutes in which neither of you attacks the other">Offer <span class="cost">${r.truceCost}</span></button>`) }];
     const rec = live.record;
     return `${sheetTable('rivals', cols, rows)}<p>Your record so far: <b>${rec.won}</b> fights won, <b>${rec.lost}</b> lost, <b>${rec.casualties}</b> units lost.</p><p class="hint">You hold ${mineHeld} of ${game.graph.towns.length} towns; ${live.goal} wins. You only know of a rival's towns once you have seen them, and can count its units only in towns in view now. Taking a rival's capital knocks it out.</p>`;
   }
@@ -818,6 +820,8 @@ $('open-sheet').addEventListener('click', () => openSheet(sheetTab ? null : 'eco
 $('close-sheet').addEventListener('click', () => openSheet(null));
 $('sheet').addEventListener('click', (e) => {
   const tab = e.target.closest('[data-tab]'), th = e.target.closest('th[data-sort]'), row = e.target.closest('tr[data-pick]');
+  const truce = e.target.closest('[data-truce]');
+  if (truce) { command({ type: 'truce', with: Number(truce.dataset.truce) }).then(() => drawSheet(true)); return; }
   if (tab) return openSheet(tab.dataset.tab);
   if (th) { const s = sheetSort[sheetTab]; sheetSort[sheetTab] = [th.dataset.sort, s[0] === th.dataset.sort ? -s[1] : -1]; return drawSheet(true); }
   if (row) {

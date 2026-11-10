@@ -84,6 +84,8 @@ export interface State {
   history: { clock: number; held: Record<number, number> }[];
   /** Fights won and lost, and units lost, by each side. */
   tally: Record<number, { won: number; lost: number; casualties: number }>;
+  /** Truces in force: the two sides, and the clock time each runs out. */
+  truces?: { a: number; b: number; until: number }[];
 }
 export type Result = { ok: true } | { error: string };
 export type RawGraph = { towns: TownNode[]; roads: Omit<Road, 'length' | 'intact' | 'cutAt' | 'repair'>[] };
@@ -293,6 +295,16 @@ export class Sim {
     if (this.besiegersOf(id).length) return 0;
     return RULES.income[t.tier] * (1 + s.market * RULES.upgrades.market.perLevel)
       * (1 + (t.traits.port ? RULES.portBonus : 0) + (t.traits.rail ? RULES.railBonus : 0)) * (s.supplied ? 1 : RULES.cutOffShare);
+  }
+
+  /** Whether two sides have a truce in force. */
+  atPeace(a: number, b: number): boolean {
+    return (this.state.truces ?? []).some((t) => (t.a === a && t.b === b) || (t.a === b && t.b === a));
+  }
+  /** What a rival asks for a truce: more the more towns it holds. */
+  truceCost(rival: number): number {
+    const held = this.state.graph.towns.filter((t) => this.state.towns[t.id].owner === rival).length;
+    return Math.max(RULES.truce.min, held * RULES.truce.perTown);
   }
 
   /** What a neutral town would take to come over without a fight: more the better defended and the bigger it is. */
@@ -532,6 +544,13 @@ export class Sim {
   private reach(army: Army, id: string, last: boolean): boolean {
     const s = this.state, town = s.towns[id], node = this.nodes.get(id)!;
     const at: Pt = [node.x, node.y];
+    if (town.owner !== army.owner && this.atPeace(town.owner, army.owner)) {
+      // A truce: the army may pass through, but cannot stay or fight. If this was where it was going, it turns for home.
+      if (!last) return true;
+      const home = this.wayHome(army.owner, id, army);
+      if (home) { army.at = id; this.march(army, home.legs, home.to); } else this.disband(army);
+      return false;
+    }
     if (town.owner !== army.owner) {
       // Not ours: join a siege already under way, start one, or attack at once if the place has no walls.
       const ally = this.besiegersOf(id).find((a) => a.owner === army.owner);
@@ -716,6 +735,7 @@ export class Sim {
       for (let j = i + 1; j < moving.length; j++) {
         const a = moving[i], b = moving[j];
         // An army already in retreat is not brought to battle again on the road.
+        if (this.atPeace(a.owner, b.owner)) continue;
         if (a.owner === b.owner || !s.armies.includes(a) || !s.armies.includes(b) || a.at || b.at || a.retreating || b.retreating) continue;
         const sa = swept.get(a)!, sb = swept.get(b)!;
         if (sa.road === sb.road && sa.lo <= sb.hi + 60 && sb.lo <= sa.hi + 60) this.meet(a, b);
@@ -728,6 +748,13 @@ export class Sim {
     for (const f of s.factions) {
       if (f.ai && f.alive && this.brain && s.clock - f.thought >= 3) { f.thought = s.clock; this.brain(this, f); }
     }
+
+    // Truces run out.
+    for (const t of s.truces ?? []) {
+      if (s.clock < t.until) continue;
+      for (const [me, them] of [[t.a, t.b], [t.b, t.a]]) this.note(`The truce with ${them === PLAYER ? 'the player' : `the ${this.faction(them).name}`} is over.`, me);
+    }
+    if (s.truces?.length) s.truces = s.truces.filter((t) => s.clock < t.until);
 
     // A record of who held how much, for the chart at the end.
     const lastSample = s.history[s.history.length - 1];
@@ -845,6 +872,22 @@ export class Sim {
         town[kind]++;
         return { ok: true };
       }
+      case 'truce': {
+        // Pay a rival to leave each other alone for a while.
+        const them = s.factions.find((f) => f.id === c.with && f.id !== NEUTRAL && f.id !== who && f.alive);
+        if (!them) return fail('no such rival');
+        if (this.atPeace(who, them.id)) return fail('you already have a truce with them');
+        // It will not make peace with someone besieging it.
+        if (s.armies.some((a) => a.owner === who && a.siege && a.at && s.towns[a.at].owner === them.id)) return fail('lift your siege first');
+        if (!pay(this.truceCost(them.id))) return fail('not enough money');
+        them.money += this.truceCost(them.id);
+        (s.truces ??= []).push({ a: who, b: them.id, until: s.clock + RULES.truce.lasts });
+        // Armies already marching on each other turn back when they arrive; sieges between the two are lifted.
+        for (const a of s.armies) if (a.siege && a.at && ((a.owner === them.id && s.towns[a.at].owner === who) || (a.owner === who && s.towns[a.at].owner === them.id))) { const home = this.wayHome(a.owner, a.at, a); if (home) this.march(a, home.legs, home.to); }
+        this.note(`Truce agreed with the ${them.name} for ${Math.round(RULES.truce.lasts / 60)} minutes.`, who);
+        this.note(`Truce agreed with ${who === PLAYER ? 'the player' : `the ${me.name}`}.`, them.id);
+        return { ok: true };
+      }
       case 'bribe': {
         // Buy a neutral town outright. It must be next door to a town of yours, and in sight.
         if (!town || town.owner !== NEUTRAL) return fail('only a neutral town can be bought');
@@ -871,6 +914,7 @@ export class Sim {
         const from = String(c.from), to = String(c.to), src = s.towns[from];
         if (!src || src.owner !== who) return fail('not your town');
         if (!s.towns[to] || to === from) return fail('pick another town');
+        if (this.atPeace(who, s.towns[to].owner)) return fail('you have a truce with them');
         const units = asked(src.garrison);
         if (!count(units)) return fail('no units to send');
         // With `settle`, the units are a transfer between garrisons: they join the garrison where they arrive, if it is still yours.
@@ -905,6 +949,7 @@ export class Sim {
         if (army.retreating) return fail('that army is retreating and takes no orders');
         const to = c.to === undefined ? army.from : String(c.to);
         if (!s.towns[to]) return fail('pick a town');
+        if (this.atPeace(who, s.towns[to].owner)) return fail('you have a truce with them');
         if (c.queue && (!army.at || army.siege)) {
           // Add a town to go on to afterwards, instead of changing where it is heading now.
           if ((army.orders ??= []).length >= 8) return fail('that is enough waypoints');
@@ -1033,7 +1078,8 @@ export class Sim {
     }
     return {
       clock: s.clock, speed: s.speed, me: { id: me.id, money: me.money, capital: me.capital, income, upkeep: this.upkeepOf(who) },
-      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, temper: f.temper ?? null, capital: seen.has(f.capital) ? f.capital : null,
+      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, temper: f.temper ?? null,
+        truce: (s.truces ?? []).find((t) => (t.a === who && t.b === f.id) || (t.b === who && t.a === f.id))?.until ?? null, truceCost: f.id > 0 && f.id !== who ? this.truceCost(f.id) : null, capital: seen.has(f.capital) ? f.capital : null,
         // What is known of each side: the towns of theirs you have seen, and the units in those in view now.
         known: s.graph.towns.filter((t) => seen.has(t.id) && s.towns[t.id].owner === f.id).length,
         inView: s.graph.towns.filter((t) => visible.has(t.id) && s.towns[t.id].owner === f.id).reduce((n, t) => n + count(this.forceAt(t.id)), 0) })),

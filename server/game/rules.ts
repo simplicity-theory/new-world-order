@@ -34,6 +34,8 @@ export const RULES = {
   maxQueue: 20,
   /** Buying a neutral town's loyalty costs this much per point of its defence strength, plus this much per tier. */
   bribe: { perStrength: 55, perTier: 120 },
+  /** A truce with a rival costs this much per town it holds, with a minimum, and lasts this long (seconds). */
+  truce: { perTown: 120, min: 250, lasts: 300 },
   /** Money seized on taking a town, by tier. */
   loot: [40, 80, 180, 400],
   /** A neutral town that has lost defenders gets one back this often (seconds), up to what it started with. */

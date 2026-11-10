@@ -58,7 +58,7 @@ export function think(sim: Sim, f: Faction): void {
     }
   }
 
-  const frontier = (id: string) => (sim.links.get(id) ?? []).filter((l) => l.road.intact && l.road.kind !== 'rail' && l.road.kind !== 'sea' && s.towns[l.other].owner !== f.id);
+  const frontier = (id: string) => (sim.links.get(id) ?? []).filter((l) => l.road.intact && l.road.kind !== 'rail' && l.road.kind !== 'sea' && s.towns[l.other].owner !== f.id && !sim.atPeace(f.id, s.towns[l.other].owner));
   /** What a town can spare: everything but a guard, which border towns and the capital always keep. */
   const spare = (id: string): Units => {
     const g = s.towns[id].garrison;
@@ -113,7 +113,7 @@ export function think(sim: Sim, f: Faction): void {
       const road = sim.roads.get(leg.road)!;
       return leg.rev ? road.a : road.b;
     };
-    const stops = [...new Set(frontier(t.id).map((l) => firstStop(l.other)))].filter((id) => s.towns[id].owner !== f.id);
+    const stops = [...new Set(frontier(t.id).map((l) => firstStop(l.other)))].filter((id) => s.towns[id].owner !== f.id && !sim.atPeace(f.id, s.towns[id].owner));
     // A walled town will be besieged first, so what matters is its strength once the walls are breached.
     const targets = stops.map((id) => ({ id, need: reckon(id, sim.siegeNeed(id) > 0) })).sort((a, b) => a.need - b.need);
     if (targets.length) {
