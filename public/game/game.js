@@ -629,6 +629,20 @@ function startMap() {
     const id = hit(e.point, 'cq-area');
     map.getCanvas().style.cursor = id || hit(e.point, 'cq-groups', 8) !== null || hit(e.point, 'cq-road-hit', 6) ? 'pointer' : '';
     if (!drag) hover(id);
+    // An army under the pointer shows a card of what is known about it.
+    const over = hit(e.point, 'cq-groups', 8), a = over !== null && !drag ? army(over) : null;
+    if (a) {
+      const where = a.siege ? `besieging ${town(a.at).name}, ${Math.round(100 * a.siege.progress / a.siege.need)}% done` : a.retreating ? `retreating to ${town(a.to).name}` : a.at ? `camped at ${town(a.at).name}` : `marching to ${town(a.to).name}`;
+      const card = $('card');
+      card.innerHTML = `<h4 style="border-color:${colorOf(a.owner)}">${esc(a.name)} <small>${myArmy(a) ? 'yours' : esc(faction(a.owner).name)}</small></h4>
+        <div class="units">${game.unitKinds.filter((k) => a[k]).map((k) => `<span class="u" style="color:${colorOf(a.owner)}">${UI[k]}<b>${a[k]}</b></span>`).join('')}</div>
+        <div>Attack strength <b>${(attackPower(a) * veteran(a)).toFixed(1)}</b>${a.stars ? ` · ${'★'.repeat(a.stars)}` : ''}</div><div class="muted">${esc(where)}${a.orders?.length ? `, then ${a.orders.map((id) => esc(town(id).name)).join(', ')}` : ''}</div>`;
+      card.style.display = 'block';
+      const r = map.getCanvasContainer().getBoundingClientRect();
+      card.style.left = `${Math.min(window.innerWidth - card.offsetWidth - 8, r.left + e.point.x + 16)}px`;
+      card.style.top = `${r.top + e.point.y + 16}px`;
+      card.dataset.army = '1';
+    } else if ($('card').dataset.army) { $('card').style.display = 'none'; delete $('card').dataset.army; }
   });
   // Shift-drag draws a box and selects every town of yours inside it.
   const canvas = map.getCanvasContainer();
@@ -770,8 +784,8 @@ function sheetHtml() {
     const rivals = live.factions.filter((f) => f.id > PLAYER);
     if (!rivals.length) return '<p class="hint">You have this map to yourself.</p>';
     const mineHeld = own.length;
-    const rows = rivals.map((f) => { const c = f.capital ? town(f.capital) : null; return { pick: c ? { towns: [c.id] } : { towns: [live.me.capital] }, name: f.name, color: f.color, alive: f.alive, known: f.known, inView: f.inView, capital: c ? c.name : 'not found yet' }; });
-    const cols = [{ key: 'name', label: 'Side', show: (r) => `<b style="color:${r.color}">${esc(r.name)}</b>${r.alive ? '' : ' <span class="tag bad">defeated</span>'}` },
+    const rows = rivals.map((f) => { const c = f.capital ? town(f.capital) : null; return { pick: c ? { towns: [c.id] } : { towns: [live.me.capital] }, name: f.name, temper: f.temper ?? '', color: colorOf(f.id), alive: f.alive, known: f.known, inView: f.inView, capital: c ? c.name : 'not found yet' }; });
+    const cols = [{ key: 'name', label: 'Side', show: (r) => `<b style="color:${r.color}">${esc(r.name)}</b>${r.alive ? '' : ' <span class="tag bad">defeated</span>'}` }, { key: 'temper', label: 'Temper' },
       { key: 'capital', label: 'Capital' }, { key: 'known', label: 'Towns you know of', num: true }, { key: 'inView', label: 'Units in view', num: true }];
     return `${sheetTable('rivals', cols, rows)}<p class="hint">You hold ${mineHeld} of ${game.graph.towns.length} towns; ${live.goal} wins. You only know of a rival's towns once you have seen them, and can count its units only in towns in view now. Taking a rival's capital knocks it out.</p>`;
   }

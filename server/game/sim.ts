@@ -54,6 +54,8 @@ export interface Faction {
   raised: number;           // armies raised so far, for naming them
   /** What this side last knew of each town's defence strength, from seeing it or from attacking it. */
   intel?: Record<string, number>;
+  /** A computer-run side's character: steady, bold or wary. */
+  temper?: keyof typeof RULES.tempers;
 }
 export interface Graph { towns: TownNode[]; roads: Road[] }
 /** One side's account of a fight, attached to the event that reports it. */
@@ -197,6 +199,7 @@ export function newState(raw: RawGraph, options: boolean | Partial<Settings> = t
     if (!options.length) break;
     const home = options.reduce((a, b) => (reach(b) - b.tier * 4000 > reach(a) - a.tier * 4000 ? b : a));
     const f = side(state.factions.length, RULES.rivals[k].name, RULES.rivals[k].color, true);
+    f.temper = RULES.rivals[k].temper;
     state.factions.push(f);
     claim(f, home);
     capitals.push(home.id);
@@ -1002,7 +1005,7 @@ export class Sim {
     }
     return {
       clock: s.clock, speed: s.speed, me: { id: me.id, money: me.money, capital: me.capital, income, upkeep: this.upkeepOf(who) },
-      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, capital: seen.has(f.capital) ? f.capital : null,
+      factions: s.factions.map((f) => ({ id: f.id, name: f.name, color: f.color, alive: f.alive, temper: f.temper ?? null, capital: seen.has(f.capital) ? f.capital : null,
         // What is known of each side: the towns of theirs you have seen, and the units in those in view now.
         known: s.graph.towns.filter((t) => seen.has(t.id) && s.towns[t.id].owner === f.id).length,
         inView: s.graph.towns.filter((t) => visible.has(t.id) && s.towns[t.id].owner === f.id).reduce((n, t) => n + count(this.forceAt(t.id)), 0) })),

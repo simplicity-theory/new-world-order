@@ -76,7 +76,9 @@ export const RULES = {
   /** How the computer-run sides are tuned: their income, and the margin of strength they want before attacking. */
   difficulty: { easy: { income: 0.7, margin: 1.6 }, normal: { income: 1, margin: 1.3 }, hard: { income: 1.4, margin: 1.15 } },
   /** Names and colours for up to three rivals. */
-  rivals: [{ name: 'Crimson League', color: '#d1345b' }, { name: 'Violet Pact', color: '#8e44ad' }, { name: 'Amber Host', color: '#c2610c' }],
+  rivals: [{ name: 'Crimson League', color: '#d1345b', temper: 'steady' }, { name: 'Violet Pact', color: '#8e44ad', temper: 'bold' }, { name: 'Amber Host', color: '#c2610c', temper: 'wary' }],
+  /** How a rival's temper bends its play: the margin it wants before attacking, and the guard it leaves behind. */
+  tempers: { steady: { margin: 1, guard: 1 }, bold: { margin: 0.85, guard: 0.5 }, wary: { margin: 1.2, guard: 1.5 } },
   /** How often (simulation seconds) the number of towns each side holds is recorded for the end-of-game chart. */
   historyEvery: 20,
 } as const;

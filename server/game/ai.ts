@@ -14,7 +14,8 @@ export function think(sim: Sim, f: Faction): void {
   const mine = s.graph.towns.filter((t) => s.towns[t.id].owner === f.id);
   if (!mine.length) return;
   const act = (c: Record<string, unknown>) => 'ok' in sim.command(c, f.id);
-  const MARGIN = RULES.difficulty[s.settings?.difficulty ?? 'normal'].margin;
+  const temper = RULES.tempers[f.temper ?? 'steady'];
+  const MARGIN = RULES.difficulty[s.settings?.difficulty ?? 'normal'].margin * temper.margin;
   // It only knows what defends a town it can see; for the rest it assumes the usual garrison for a place that size, and a bit more.
   const inSight = sim.visible(f.id);
   // What it has seen or met in battle it remembers, and it never assumes a place is weaker than it last found it.
@@ -61,7 +62,7 @@ export function think(sim: Sim, f: Faction): void {
   /** What a town can spare: everything but a guard, which border towns and the capital always keep. */
   const spare = (id: string): Units => {
     const g = s.towns[id].garrison;
-    const guard = id === f.capital ? 3 : frontier(id).length ? 2 : 0;
+    const guard = Math.round((id === f.capital ? 3 : frontier(id).length ? 2 : 0) * temper.guard);
     // The guard is found from infantry first, then whatever else is there.
     let left = guard;
     const out = { ...g };
