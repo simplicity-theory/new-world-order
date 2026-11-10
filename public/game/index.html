@@ -51,7 +51,7 @@
   .unit.fixed { opacity: 1; cursor: default; background: color-mix(in srgb, var(--c) 14%, #fff); }
   .unit .n { position: absolute; right: -4px; bottom: -4px; min-width: 14px; padding: 0 2px; border-radius: 7px; background: var(--ink); color: #fff; font: 600 9.5px/14px system-ui, sans-serif; text-align: center; }
   .mini { padding: 2px 7px; font-size: 11.500px; }
-  .slots { flex: none; display: flex; gap: 4px; align-items: flex-start; }
+  .slots { flex: none; display: flex; flex-wrap: wrap; gap: 3px 4px; align-items: flex-start; align-content: center; max-width: 392px; }
   .slots .gap { width: 7px; }
   .cell { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 46px; }
   .slot { position: relative; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; border-radius: 7px; overflow: hidden; }
@@ -101,11 +101,11 @@
   #prod header { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 2px 6px; }
   .prow { display: flex; align-items: center; gap: 5px; padding: 3px; border-radius: 6px; }
   .prow.sel { background: #fff3cd; }
-  .pname { flex: 1; width: 92px; padding: 3px 4px; border: 0; background: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pname { flex: 1; width: 84px; padding: 3px 4px; border: 0; background: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pname:hover { text-decoration: underline; }
-  .tile { width: 40px; height: 40px; flex: none; }
+  .tile { width: 34px; height: 34px; flex: none; }
   .tile.none { display: inline-block; }
-  .tile .ico svg { width: 22px; height: 22px; }
+  .tile .ico svg { width: 20px; height: 20px; }
   .tile.looping { box-shadow: inset 0 0 0 2px var(--you); }
   .cap { font-size: 10.5px; line-height: 1.15; color: var(--muted); text-align: center; max-width: 50px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cap b { color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -113,7 +113,7 @@
   .repeat svg { width: 14px; height: 14px; }
   .hint { color: var(--muted); font-size: 12px; }
 
-  #panel { top: 78px; right: 222px; width: 290px; max-height: calc(100% - 230px); overflow: auto; padding: 12px; display: none; }
+  #panel { top: 78px; right: 270px; width: 290px; max-height: calc(100% - 230px); overflow: auto; padding: 12px; display: none; }
   #panel h3 { margin: 10px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   #panel h3:first-child { margin-top: 0; }
   .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }

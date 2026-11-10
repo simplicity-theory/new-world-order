@@ -81,7 +81,9 @@ const counts = (id) => (selTowns.length === 1 ? pickedUnits(id) : Object.fromEnt
 const clockText = (c) => `${Math.floor(c / 60)}:${String(Math.floor(c) % 60).padStart(2, '0')}`;
 
 // The same arithmetic as the server, for previews.
-const attackPower = (u) => game.unitKinds.reduce((n, k) => n + (u[k] || 0) * game.rules.units[k].attack, 0);
+const attackPower = (u, storming = false) => game.unitKinds.reduce((n, k) => n + (u[k] || 0) * ((storming && game.rules.units[k].assault) || game.rules.units[k].attack), 0);
+const UNIT_KEY = { infantry: 'q', scout: 'e', vehicle: 'w', artillery: 't' };
+const BUILD_KEY = { barracks: 'q', factory: 'w' };
 const veteran = (a) => 1 + (a.stars || 0) * game.rules.experience.perStar;
 const defencePower = (u, mult) => game.unitKinds.reduce((n, k) => n + (u[k] || 0) * game.rules.units[k].defence, 0) * mult;
 function speedOn(u, kind) {
@@ -141,9 +143,11 @@ function forecast(from, to, units) {
   if (mine(stop)) return out;
   const s = state(stop);
   if (stop !== to) out.text += ` — they will stop at ${town(stop).name}`;
-  out.fight = { siege: s.siege, known: s.visible };
+  // Artillery shortens a siege.
+  const guns = 1 + Math.min(game.rules.siegeGuns.cap, game.rules.siegeGuns.each * (units.artillery || 0));
+  out.fight = { siege: s.siege / guns, known: s.visible };
   if (s.visible) {
-    const ap = attackPower(units) * veteran(units), dp = s.siege ? s.breached : s.strength;
+    const ap = attackPower(units, true) * veteran(units), dp = s.siege ? s.breached : s.strength;
     const win = ap > dp, ratio = win ? (ap ? dp / ap : 0) : (dp ? ap / dp : 0);
     Object.assign(out.fight, { ap, dp, win, lose: win ? Math.round(total(units) * game.rules.lossScale * ratio ** game.rules.lossPower) : total(units) - Math.round(total(units) * (game.rules.retreat.base + game.rules.retreat.close * ratio)) });
   }
@@ -914,6 +918,8 @@ function drawMini() {
 const svg = (body) => `<svg viewBox="0 0 24 24" aria-hidden="true">${body}</svg>`;
 const UI = {
   infantry: svg('<circle cx="12" cy="6.500" r="3.500" fill="currentColor"/><path d="M5 21v-4.500C5 13 8 11.500 12 11.500s7 1.500 7 5V21Z" fill="currentColor"/><path d="M7.500 5.500h9" stroke="currentColor" stroke-width="2.400" stroke-linecap="round"/>'),
+  scout: svg('<circle cx="7" cy="14" r="4.500" fill="none" stroke="currentColor" stroke-width="2.400"/><circle cx="17" cy="14" r="4.500" fill="none" stroke="currentColor" stroke-width="2.400"/><path d="M11.500 13h1M4 10l2-5h2M20 10l-2-5h-2" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round"/>'),
+  artillery: svg('<path d="M3 13 17 5l2 3.500L7 16Z" fill="currentColor"/><circle cx="9" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2.400"/><path d="M13 19h7" stroke="currentColor" stroke-width="2.400" stroke-linecap="round"/>'),
   vehicle: svg('<path d="M2 15V8.500h11V15M13 10.500h4.500L21 13.500V15" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linejoin="round"/><rect x="2" y="8.500" width="11" height="6.500" fill="currentColor"/><circle cx="7" cy="17" r="2.600" fill="currentColor"/><circle cx="17" cy="17" r="2.600" fill="currentColor"/>'),
   base: svg('<path d="M4 12.500 12 6l8 6.500M4 19l8-6.500 8 6.500" fill="none" stroke="currentColor" stroke-width="2.800" stroke-linecap="round" stroke-linejoin="round"/>'),
   factory: svg('<path d="M2.500 21V10l6 4v-4l6 4V4.500H20V21Z" fill="currentColor"/>'),
@@ -1043,17 +1049,21 @@ function cmdHtml() {
       ${all > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
       ${all ? `<span class="tip">drag or right-click to send</span>` : ''}</div>${tray(s.garrison, PLAYER, true)}</div><div class="slots">`;
   if (all) html += slot({ key: 'y', icon: UI.flag, does: 'muster', caption: 'Muster', disabled: !going, title: 'Form the selected units into an army camped here, ready for orders' }) + '<span class="gap"></span>';
-  [['barracks', 'q'], ['factory', 'w']].forEach(([kind, key]) => {
-    const rule = rules.buildings[kind], unit = rules.units[rule.trains], b = s.buildings[kind];
-    const icon = kind === 'barracks' ? UI.base : UI.factory;
-    if (!b) html += slot({ key, icon, does: `build:${kind}`, price: rule.cost, cls: 'empty', disabled: cash < rule.cost, title: `Build ${rule.name.toLowerCase()} — lets you train ${unit.name.toLowerCase()}` });
+  for (const [kind, rule] of Object.entries(rules.buildings)) {
+    const b = s.buildings[kind], icon = kind === 'barracks' ? UI.base : UI.factory, key = BUILD_KEY[kind];
+    const makes = rule.trains.map((u) => rules.units[u].name.toLowerCase()).join(' and ');
+    if (!b) html += slot({ key, icon, does: `build:${kind}`, price: rule.cost, cls: 'empty', disabled: cash < rule.cost, title: `Build ${rule.name.toLowerCase()} — lets you train ${makes}` });
     else if (!b.done) html += slot({ key, icon, does: 'none', caption: 'building', disabled: true, meter: `${id}|${kind}`, title: `${rule.name} under construction` });
     else {
-      html += slot({ key, icon: UI[rule.trains], does: `train:${rule.trains}`, price: unit.cost, cls: cash < unit.cost ? 'poor' : '', meter: `${id}|${kind}`, badge: b.queue || '',
-        title: `Train ${unit.name.toLowerCase()} — click to queue one, Shift-click for five, right-click to cancel one${b.queue ? `. ${b.queue} in training` : ''}` });
-      html += `<button class="mini repeat ${b.repeat ? 'on' : ''}" data-do="repeat:${rule.trains}" data-key="${key.toUpperCase()}" title="Keep training ${unit.name.toLowerCase()} while there is money (Shift+${key.toUpperCase()})">${UI.repeat}</button>`;
+      for (const u of rule.trains) {
+        const unit = rules.units[u], line = b.lines[u], k = UNIT_KEY[u];
+        const what = u === 'scout' ? ' Fast, sees a long way, hardly fights.' : u === 'artillery' ? ' Slow; five times the attack against towns, and speeds up sieges.' : '';
+        html += slot({ key: k, icon: UI[u], does: `train:${u}`, price: unit.cost, cls: cash < unit.cost ? 'poor' : '', meter: `${id}|${kind}|${u}`, badge: line.queue || '',
+          title: `Train ${unit.name.toLowerCase()} — click to queue one, Shift-click for five, right-click to cancel one.${what}${line.queue ? ` ${line.queue} in training.` : ''}` });
+        html += `<button class="mini repeat ${line.repeat ? 'on' : ''}" data-do="repeat:${u}" data-key="${k.toUpperCase()}" title="Keep training ${unit.name.toLowerCase()} while there is money (Shift+${k.toUpperCase()})">${UI.repeat}</button>`;
+      }
     }
-  });
+  }
   html += '<span class="gap"></span>';
   [['market', 'm', UI.market], ['fort', 'f', UI.fort]].forEach(([kind, key, icon]) => {
     const rule = rules.upgrades[kind], level = kind === 'market' ? s.market : s.fort, top = level >= rules.maxLevel;
@@ -1094,7 +1104,7 @@ function renderUi(force) {
     g && [g.name, g.at, g.to, g.infantry, g.vehicle, g.retreating, g.siege && Math.round(100 * g.siege.progress / g.siege.need), g.at && armiesAt(g.at).length],
     selTowns.map((id) => armiesAt(id).map((a) => [a.id, a.name, a.infantry + a.vehicle])),
     selTowns.map((id) => [state(id).owner, state(id).garrison, state(id).visible, state(id).rally, state(id).supplied, state(id).market, state(id).fort, Math.round(state(id).income ?? 0)]),
-    s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, b.queue, b.repeat])]);
+    s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, Object.values(b.lines).map((l) => [l.queue, l.repeat])])]);
   if (force || key !== cmdKey) {
     cmdKey = key;
     const html = cmdHtml();
@@ -1106,11 +1116,11 @@ function renderUi(force) {
   drawProduction();
   // Progress shows as a clock wipe over the icon: the shaded part is what is left to do.
   for (const m of document.querySelectorAll('[data-meter]')) {
-    const [id, kind] = m.dataset.meter.split('|');
-    const b = state(id)?.buildings?.[kind];
-    const idle = !b || (b.done && !b.queue);
+    const [id, kind, unit] = m.dataset.meter.split('|');
+    const b = state(id)?.buildings?.[kind], line = unit ? b?.lines[unit] : null;
+    const idle = !b || (unit ? !line?.queue : b.done);
     m.style.display = idle ? 'none' : 'block';
-    if (!idle) m.style.setProperty('--p', (100 * (b.done ? b.training : b.progress)).toFixed(1));
+    if (!idle) m.style.setProperty('--p', (100 * (unit ? line.training : b.progress)).toFixed(1));
   }
 }
 
@@ -1121,20 +1131,20 @@ let prodKey = '';
 function drawProduction() {
   const rows = game.graph.towns.filter((t) => mine(t.id) && Object.values(state(t.id).buildings ?? {}).some((b) => b.done));
   const cash = live.me.money;
-  const key = JSON.stringify([rows.map((t) => [t.id, Object.entries(state(t.id).buildings).map(([k, b]) => [k, b.done, b.queue, b.repeat])]), selTowns,
+  const key = JSON.stringify([rows.map((t) => [t.id, Object.entries(state(t.id).buildings).map(([k, b]) => [k, b.done, Object.values(b.lines).map((l) => [l.queue, l.repeat])])]), selTowns,
     Object.values(game.rules.units).map((u) => cash >= u.cost)]);
   if (key === prodKey) return;
   prodKey = key;
   $('prod').style.display = rows.length ? 'block' : 'none';
   $('prod').innerHTML = '<header>Production</header>' + rows.map((t) => {
     const s = state(t.id);
-    const tiles = Object.entries(game.rules.buildings).map(([kind, rule]) => {
-      const b = s.buildings[kind], unit = game.rules.units[rule.trains];
+    const tiles = Object.entries(game.rules.buildings).flatMap(([kind, rule]) => rule.trains.map((u) => {
+      const b = s.buildings[kind], unit = game.rules.units[u], line = b?.lines[u];
       if (!b?.done) return '<span class="tile none"></span>';
-      return `<button class="slot tile ${cash < unit.cost ? 'poor' : ''} ${b.repeat ? 'looping' : ''}" data-do="train:${rule.trains}" data-town="${t.id}"
-        title="${esc(`${unit.name} in ${t.name}, ${unit.cost} each — click to queue one, Shift-click for five, right-click to cancel one${b.repeat ? '. Repeating' : ''}`)}">
-        <span class="ico">${UI[rule.trains]}</span><span class="wipe" data-meter="${t.id}|${kind}"></span>${b.queue ? `<span class="count">${b.queue}</span>` : ''}</button>`;
-    }).join('');
+      return `<button class="slot tile ${cash < unit.cost ? 'poor' : ''} ${line.repeat ? 'looping' : ''}" data-do="train:${u}" data-town="${t.id}"
+        title="${esc(`${unit.name} in ${t.name}, ${unit.cost} each — click to queue one, Shift-click for five, right-click to cancel one${line.repeat ? '. Repeating' : ''}`)}">
+        <span class="ico">${UI[u]}</span><span class="wipe" data-meter="${t.id}|${kind}|${u}"></span>${line.queue ? `<span class="count">${line.queue}</span>` : ''}</button>`;
+    })).join('');
     return `<div class="prow ${selTowns.includes(t.id) ? 'sel' : ''}"><button class="pname" data-goto="${t.id}" title="Go to ${esc(t.name)}">${esc(t.name)}</button>${tiles}</div>`;
   }).join('');
 }
@@ -1143,7 +1153,7 @@ function perform(does, at, many = false) {
   const [what, arg] = does.split(':'), id = at || selTowns[0];
   if (what === 'build') command({ type: 'build', town: id, building: arg });
   else if (what === 'train') { for (let k = 0; k < (many ? 5 : 1); k++) command({ type: 'train', town: id, unit: arg }); }
-  else if (what === 'repeat') command({ type: 'repeat', town: id, unit: arg, on: !Object.entries(state(id).buildings).find(([k]) => game.rules.buildings[k].trains === arg)?.[1].repeat });
+  else if (what === 'repeat') command({ type: 'repeat', town: id, unit: arg, on: !Object.values(state(id).buildings).find((b) => b.lines[arg])?.lines[arg].repeat });
   else if (what === 'upgrade') command({ type: 'upgrade', town: id, upgrade: arg });
   else if (what === 'cut') command({ type: 'cut', road: does.slice(4) });
   else if (what === 'repair') command({ type: 'repair', road: does.slice(7) });

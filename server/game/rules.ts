@@ -11,18 +11,23 @@ export const RULES = {
   /** Extra income for a port or a railway town, and the share kept by a town cut off from its capital. */
   portBonus: 0.25, railBonus: 0.25, cutOffShare: 0.5,
   buildings: {
-    barracks: { name: 'Infantry base', cost: 200, time: 30, trains: 'infantry' },
-    factory: { name: 'Vehicle factory', cost: 500, time: 60, trains: 'vehicle' },
+    barracks: { name: 'Infantry base', cost: 200, time: 30, trains: ['infantry', 'scout'] },
+    factory: { name: 'Vehicle factory', cost: 500, time: 60, trains: ['vehicle', 'artillery'] },
   },
   units: {
     // attack and defence are strength per unit; upkeep is money per minute.
+    // `assault` replaces attack when storming a town; `sight` replaces an army's usual range of view (m).
     infantry: { name: 'Infantry', cost: 50, time: 10, attack: 1, defence: 1.5, upkeep: 2 },
+    scout: { name: 'Scouts', cost: 40, time: 6, attack: 0.2, defence: 0.2, upkeep: 1, sight: 9000 },
     vehicle: { name: 'Vehicle', cost: 150, time: 20, attack: 3, defence: 2.5, upkeep: 6 },
+    artillery: { name: 'Artillery', cost: 200, time: 25, attack: 1, defence: 1, upkeep: 6, assault: 5 },
   },
   /** Speed in km/h by road class. Infantry walk at the same pace anywhere; vehicles want good roads. */
   speed: {
     infantry: { motorway: 5, primary: 5, secondary: 5, tertiary: 5 },
+    scout: { motorway: 30, primary: 30, secondary: 26, tertiary: 22 },
     vehicle: { motorway: 70, primary: 50, secondary: 38, tertiary: 24 },
+    artillery: { motorway: 28, primary: 22, secondary: 16, tertiary: 9 },
   },
   maxQueue: 20,
   /** A neutral town that has lost defenders gets one back this often (seconds), up to what it started with. */
@@ -42,6 +47,8 @@ export const RULES = {
    * extra for a town or a city. After a full siege the fortifications no longer count.
    */
   siege: { perFort: 25, town: 20, city: 40 },
+  /** Each artillery piece in a besieging army speeds the siege by this much, up to the cap. */
+  siegeGuns: { each: 0.25, cap: 2 },
   /** A garrison joining a relief force's fight against besiegers adds this share of its attack. */
   sortie: 0.5,
   /** Town upgrades: up to maxLevel each; a level costs base × (level + 1) × (tier + 1). */

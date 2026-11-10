@@ -4,7 +4,7 @@ import { think } from './ai.ts';
 import { NEUTRAL, PLAYER, RULES } from './rules.ts';
 
 const RIVAL = 2;
-import { Sim, attackPower, defencePower, fight, newState, share, speedOn, type RawGraph } from './sim.ts';
+import { Sim, attackPower, defencePower, fight, newBuilding, newState, share, speedOn, type RawGraph } from './sim.ts';
 
 // A small hand-made map: five towns in a line, A–B–C–D–E, 4 km apart, plus a back road A–C.
 const town = (id: string, x: number, tier = 1) => ({
@@ -25,16 +25,16 @@ function game(rival = false) {
   return { sim, s: sim.state, me: sim.faction(PLAYER) };
 }
 const run = (sim: Sim, seconds: number) => { for (let t = 0; t < seconds * 5; t++) sim.step(0.2); };
-const empty = () => ({ infantry: 0, vehicle: 0 });
+const empty = () => ({ infantry: 0, scout: 0, vehicle: 0, artillery: 0 });
 /** Hand a town to a side with a given garrison. */
-const give = (sim: Sim, id: string, owner: number, infantry = 0) => { sim.state.towns[id].owner = owner; sim.state.towns[id].garrison = { infantry, vehicle: 0 }; sim.refresh(); };
+const give = (sim: Sim, id: string, owner: number, infantry = 0) => { sim.state.towns[id].owner = owner; sim.state.towns[id].garrison = { ...empty(), infantry }; sim.refresh(); };
 const armiesOf = (sim: Sim, owner: number) => sim.state.armies.filter((a) => a.owner === owner);
 
 test('the player starts in the middle town; the rest are neutral and garrisoned', () => {
   const { s, me } = game();
   assert.equal(me.capital, 'c');
   assert.equal(s.towns.c.owner, PLAYER);
-  assert.deepEqual(s.towns.a.garrison, RULES.neutralGarrison[1]);
+  assert.deepEqual(s.towns.a.garrison, { ...empty(), ...RULES.neutralGarrison[1] });
   assert.equal(s.towns.a.owner, NEUTRAL);
 });
 
@@ -74,19 +74,19 @@ test('building and training take money and time', () => {
 
 test('cancelling takes a unit off the queue and refunds it', () => {
   const { sim, s, me } = game();
-  s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+  s.towns.c.buildings.barracks = newBuilding('barracks', true);
   assert.deepEqual(sim.command({ type: 'cancel', town: 'c', unit: 'infantry' }), { error: 'nothing in training' });
   sim.command({ type: 'train', town: 'c', unit: 'infantry' });
   sim.command({ type: 'train', town: 'c', unit: 'infantry' });
   const before = me.money;
   assert.deepEqual(sim.command({ type: 'cancel', town: 'c', unit: 'infantry' }), { ok: true });
-  assert.equal(s.towns.c.buildings.barracks!.queue, 1);
+  assert.equal(s.towns.c.buildings.barracks!.lines.infantry!.queue, 1);
   assert.equal(me.money, before + RULES.units.infantry.cost);
 });
 
 test('repeat training keeps queueing while there is money', () => {
   const { sim, s } = game();
-  s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+  s.towns.c.buildings.barracks = newBuilding('barracks', true);
   sim.command({ type: 'repeat', town: 'c', unit: 'infantry', on: true });
   run(sim, RULES.units.infantry.time * 3 + 2);
   assert.equal(s.towns.c.garrison.infantry, 3);
@@ -267,6 +267,37 @@ test('a neutral town recovers its losses over time', () => {
   assert.equal(s.towns.d.garrison.infantry, RULES.neutralGarrison[1].infantry);
 });
 
+test('artillery counts for more against towns and speeds a siege; scouts see further', () => {
+  const { sim, s } = game();
+  assert.equal(attackPower({ artillery: 2 }), 2);
+  assert.equal(attackPower({ artillery: 2 }, true), 10);
+  s.towns.d.fort = 2;
+  s.towns.c.garrison = { ...empty(), infantry: 4, artillery: 2 };
+  sim.command({ type: 'move', from: 'c', to: 'd', infantry: 4, artillery: 2 });
+  const pace = speedOn({ artillery: 1 }, 'secondary');
+  assert.ok(pace > speedOn({ infantry: 1 }, 'secondary'));
+  run(sim, 4000 / speedOn({ infantry: 1 }, 'secondary') + 2);
+  assert.ok(s.armies[0].siege);
+  run(sim, sim.siegeNeed('d') / 1.5 + 1); // two guns: half as fast again
+  assert.equal(s.towns.d.owner, PLAYER);
+
+  const b = game();
+  b.s.towns.c.garrison = { ...empty(), scout: 1 };
+  b.sim.command({ type: 'muster', town: 'c', scout: 1 });
+  assert.equal(b.sim.eyes(PLAYER).find((e) => e[2] === RULES.units.scout.sight)?.[2], 9000);
+});
+
+test('a base trains infantry and scouts side by side', () => {
+  const { sim, s } = game();
+  s.towns.c.buildings.barracks = newBuilding('barracks', true);
+  sim.command({ type: 'train', town: 'c', unit: 'infantry' });
+  sim.command({ type: 'train', town: 'c', unit: 'scout' });
+  assert.deepEqual(sim.command({ type: 'train', town: 'c', unit: 'artillery' }), { error: 'needs a finished vehicle factory' });
+  run(sim, RULES.units.infantry.time + 1);
+  assert.equal(s.towns.c.garrison.infantry, 1);
+  assert.equal(s.towns.c.garrison.scout, 1);
+});
+
 test('a camped army can be ordered to march', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);
@@ -340,7 +371,7 @@ test('upgrades raise income and defence and get dearer each level', () => {
 test('newly trained units march to the rally point and join its garrison', () => {
   const { sim, s } = game();
   give(sim, 'd', PLAYER);
-  s.towns.c.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+  s.towns.c.buildings.barracks = newBuilding('barracks', true);
   assert.deepEqual(sim.command({ type: 'rally', town: 'c', to: 'a' }), { error: 'a rally point must be another town you hold' });
   sim.command({ type: 'rally', town: 'c', to: 'd' });
   sim.command({ type: 'train', town: 'c', unit: 'infantry' });

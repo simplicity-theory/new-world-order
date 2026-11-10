@@ -5,7 +5,7 @@ import { run } from '../pool.ts';
 import { Store, type Side, type World } from '../store.ts';
 import { think } from './ai.ts';
 import { DEFAULTS, PLAYER, RULES, type Settings } from './rules.ts';
-import { Sim, UNIT_KINDS, mergeGraph, newState, type RawGraph, type State, type TownNode } from './sim.ts';
+import { Sim, UNIT_KINDS, mergeGraph, newBuilding, newState, type RawGraph, type State, type TownNode } from './sim.ts';
 import { sight, territory, type Territory } from './territory.ts';
 
 // Conquer's server side: loading and saving games, running the clock, streaming the game
@@ -40,7 +40,7 @@ export class Game {
     const row = world.db.prepare('SELECT state FROM game WHERE id = 1').get() as { state: string } | undefined;
     const saved = row ? JSON.parse(row.state) as State : null;
     // Games saved by an earlier version of the rules start again on the same map.
-    const game = new Game(world, saved?.version === 4 ? saved : newState(await Game.graph(world), settings ?? saved?.settings ?? DEFAULTS));
+    const game = new Game(world, saved?.version === 5 ? saved : newState(await Game.graph(world), settings ?? saved?.settings ?? DEFAULTS));
     game.save();
     return game;
   }
@@ -92,8 +92,9 @@ export class Game {
       if (t && typeof c.infantry === 'number') t.garrison.infantry = c.infantry;
       if (t && typeof c.vehicle === 'number') t.garrison.vehicle = c.vehicle;
       if (t && typeof c.fort === 'number') t.fort = c.fort;
-      if (t && c.barracks) t.buildings.barracks = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
-      if (t && c.factory) t.buildings.factory = { done: true, progress: 0, queue: 0, training: 0, repeat: false };
+      if (t && c.barracks) t.buildings.barracks = newBuilding('barracks', true);
+      if (t && c.factory) t.buildings.factory = newBuilding('factory', true);
+      if (t) for (const k of UNIT_KINDS) if (typeof c[k] === 'number') t.garrison[k] = c[k] as number;
       this.sim.refresh();
       this.send('tick', this.live());
       return { ok: true as const };

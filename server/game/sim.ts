@@ -9,7 +9,7 @@ import { DEFAULTS, NEUTRAL, PLAYER, RULES, type BuildingKind, type RoadKind, typ
 // town camps there as itself rather than melting into the garrison.
 
 export type Pt = [number, number];
-export interface Units { infantry: number; vehicle: number }
+export type Units = Record<UnitKind, number>;
 export interface TownNode {
   id: string; name: string; tier: number; r: number; x: number; y: number;
   outline: Pt[]; sites: Pt[][];
@@ -22,7 +22,9 @@ export interface Road {
   cutAt: Pt | null;         // where the break is, once cut
   repair: number;           // -1 not being mended, otherwise progress 0..1
 }
-export interface Building { done: boolean; progress: number; queue: number; training: number; repeat: boolean }
+/** One kind of unit being trained in a building: how many are queued, progress on the current one, and whether to keep going. */
+export interface Line { queue: number; training: number; repeat: boolean }
+export interface Building { done: boolean; progress: number; lines: Partial<Record<UnitKind, Line>> }
 export interface TownState {
   owner: number;
   garrison: Units;
@@ -62,7 +64,7 @@ export interface Report {
 }
 export interface GameEvent { id: number; clock: number; to: number; text: string; kind?: 'battle' | 'built' | 'siege'; at?: Pt; report?: Report }
 export interface State {
-  version: 4;
+  version: 5;
   clock: number;            // simulation seconds played
   speed: number;            // 0 paused, otherwise a multiplier
   factions: Faction[];
@@ -83,10 +85,17 @@ export type Result = { ok: true } | { error: string };
 export type RawGraph = { towns: TownNode[]; roads: Omit<Road, 'length' | 'intact' | 'cutAt' | 'repair'>[] };
 
 export const UNIT_KINDS = Object.keys(RULES.units) as UnitKind[];
-const none = (): Units => ({ infantry: 0, vehicle: 0 });
-const count = (u: Units): number => u.infantry + u.vehicle;
-const add = (a: Units, b: Units): Units => ({ infantry: a.infantry + b.infantry, vehicle: a.vehicle + b.vehicle });
-const only = (u: Units): Units => ({ infantry: u.infantry, vehicle: u.vehicle });
+const each = (fn: (k: UnitKind) => number): Units => Object.fromEntries(UNIT_KINDS.map((k) => [k, fn(k)])) as Units;
+const none = (): Units => each(() => 0);
+const count = (u: Partial<Units>): number => UNIT_KINDS.reduce((n, k) => n + (u[k] || 0), 0);
+const add = (a: Partial<Units>, b: Partial<Units>): Units => each((k) => (a[k] || 0) + (b[k] || 0));
+const only = (u: Partial<Units>): Units => each((k) => u[k] || 0);
+/** Remove some units from a garrison or army, in place. */
+const take = (from: Units, units: Units): void => { for (const k of UNIT_KINDS) from[k] = (from[k] || 0) - units[k]; };
+/** A building with its training lines, as when just ordered (or finished, for tests and debugging). */
+export function newBuilding(kind: BuildingKind, done = false): Building {
+  return { done, progress: 0, lines: Object.fromEntries(RULES.buildings[kind].trains.map((u) => [u, { queue: 0, training: 0, repeat: false }])) };
+}
 const ordinal = (n: number): string => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 
 export function lineLength(pts: Pt[]): number {
@@ -105,9 +114,11 @@ export function pointAlong(pts: Pt[], d: number): Pt {
 
 // ----- Combat -----
 
-export const attackPower = (u: Units): number => u.infantry * RULES.units.infantry.attack + u.vehicle * RULES.units.vehicle.attack;
-export const defencePower = (u: Units, multiplier: number): number =>
-  (u.infantry * RULES.units.infantry.defence + u.vehicle * RULES.units.vehicle.defence) * multiplier;
+/** Attack strength of some units. Storming a town, units with an `assault` value use that instead. */
+export const attackPower = (u: Partial<Units>, storming = false): number =>
+  UNIT_KINDS.reduce((n, k) => n + (u[k] || 0) * ((storming && (RULES.units[k] as { assault?: number }).assault) || RULES.units[k].attack), 0);
+export const defencePower = (u: Partial<Units>, multiplier: number): number =>
+  UNIT_KINDS.reduce((n, k) => n + (u[k] || 0) * RULES.units[k].defence, 0) * multiplier;
 
 /**
  * Settle a fight between two strengths. The stronger side wins and loses a share of its
@@ -123,17 +134,17 @@ export function fight(ap: number, dp: number): { win: boolean; loss: number; kee
 export const veteran = (a: { stars?: number }): number => 1 + (a.stars ?? 0) * RULES.experience.perStar;
 
 /** A share of some units, rounded. A winner always keeps at least one. */
-export function share(u: Units, keep: number, atLeastOne = false): Units {
-  const out = { infantry: Math.round(u.infantry * keep), vehicle: Math.round(u.vehicle * keep) };
-  if (atLeastOne && count(out) === 0 && count(u) > 0) { if (u.vehicle) out.vehicle = 1; else out.infantry = 1; }
+export function share(u: Partial<Units>, keep: number, atLeastOne = false): Units {
+  const out = each((k) => Math.round((u[k] || 0) * keep));
+  if (atLeastOne && count(out) === 0 && count(u) > 0) out[UNIT_KINDS.reduce((a, b) => ((u[b] || 0) > (u[a] || 0) ? b : a))] = 1;
   return out;
 }
 
 /** Metres per simulation second for a group on a class of road: the pace of its slowest kind of unit. */
-export function speedOn(u: Units, kind: string): number {
+export function speedOn(u: Partial<Units>, kind: string): number {
   const k = (kind in RULES.speed.vehicle ? kind : 'tertiary') as RoadKind;
   let kmh = Infinity;
-  for (const unit of UNIT_KINDS) if (u[unit] > 0) kmh = Math.min(kmh, RULES.speed[unit][k]);
+  for (const unit of UNIT_KINDS) if ((u[unit] || 0) > 0) kmh = Math.min(kmh, RULES.speed[unit][k]);
   if (kmh === Infinity) kmh = RULES.speed.infantry[k];
   return (kmh / 3.6) * RULES.timeScale;
 }
@@ -146,7 +157,7 @@ export function mergeGraph(state: State, raw: RawGraph): void {
   for (const t of raw.towns) {
     if (towns.has(t.id)) continue;
     state.graph.towns.push(t);
-    state.towns[t.id] = { owner: NEUTRAL, garrison: { ...RULES.neutralGarrison[t.tier] }, buildings: {}, market: 0, fort: 0, rally: null, supplied: true };
+    state.towns[t.id] = { owner: NEUTRAL, garrison: only(RULES.neutralGarrison[t.tier]), buildings: {}, market: 0, fort: 0, rally: null, supplied: true };
   }
   for (const r of raw.roads) {
     if (!roads.has(r.id)) state.graph.roads.push({ ...r, length: lineLength(r.pts), intact: true, cutAt: null, repair: -1 });
@@ -158,7 +169,7 @@ export function newState(raw: RawGraph, options: boolean | Partial<Settings> = t
   const side = (id: number, name: string, color: string, ai: boolean): Faction =>
     ({ id, name, color, money: id === NEUTRAL ? 0 : RULES.startMoney, capital: '', ai, alive: true, seen: [], thought: 0, raised: 0 });
   const state: State = {
-    version: 4, clock: 0, speed: 1, graph: { towns: [], roads: [] }, towns: {}, armies: [], nextId: 1, events: [], winner: null, dismissed: false, settings, history: [], tally: {},
+    version: 5, clock: 0, speed: 1, graph: { towns: [], roads: [] }, towns: {}, armies: [], nextId: 1, events: [], winner: null, dismissed: false, settings, history: [], tally: {},
     factions: [side(NEUTRAL, 'Neutral', '#7d848c', false), side(PLAYER, 'You', '#1f6feb', false)],
   };
   mergeGraph(state, raw);
@@ -284,7 +295,7 @@ export class Sim {
 
   upkeepOf(who: number): number {
     let total = 0;
-    const tally = (u: Units) => { for (const k of UNIT_KINDS) total += u[k] * RULES.units[k].upkeep; };
+    const tally = (u: Partial<Units>) => { for (const k of UNIT_KINDS) total += (u[k] || 0) * RULES.units[k].upkeep; };
     for (const t of Object.values(this.state.towns)) if (t.owner === who) tally(t.garrison);
     for (const a of this.state.armies) if (a.owner === who) tally(a);
     return total;
@@ -300,7 +311,12 @@ export class Sim {
   eyes(who: number): [number, number, number][] {
     const eyes: [number, number, number][] = [];
     for (const t of this.state.graph.towns) if (this.state.towns[t.id].owner === who) eyes.push([t.x, t.y, RULES.vision.town + t.r]);
-    for (const a of this.state.armies) if (a.owner === who) eyes.push([...this.position(a), RULES.vision.group]);
+    // An army sees as far as its longest-sighted units; scouts see a long way.
+    for (const a of this.state.armies) {
+      if (a.owner !== who) continue;
+      const range = UNIT_KINDS.reduce<number>((r, k) => (a[k] > 0 ? Math.max(r, (RULES.units[k] as { sight?: number }).sight ?? 0) : r), RULES.vision.group);
+      eyes.push([...this.position(a), range]);
+    }
     return eyes;
   }
 
@@ -436,7 +452,7 @@ export class Sim {
     const s = this.state, town = s.towns[id], node = this.nodes.get(id)!;
     const camped = this.defendersAt(id);
     const attackers = only(army), defenders = this.forceAt(id);
-    const ap = attackPower(army) * veteran(army), dp = this.strengthOf(id, breached);
+    const ap = attackPower(army, true) * veteran(army), dp = this.strengthOf(id, breached);
     const r = fight(ap, dp);
     const before = town.owner, at: Pt = [node.x, node.y];
     const report = (mine: 'att' | 'def', attLeft: Units, defLeft: Units): Report => (mine === 'att'
@@ -468,7 +484,7 @@ export class Sim {
     town.owner = army.owner;
     town.garrison = none();
     town.rally = null;
-    for (const b of Object.values(town.buildings)) { b.queue = 0; b.training = 0; b.repeat = false; if (!b.done) b.progress = 0; }
+    for (const b of Object.values(town.buildings)) { if (!b.done) b.progress = 0; for (const l of Object.values(b.lines)) Object.assign(l, { queue: 0, training: 0, repeat: false }); }
     Object.assign(army, survivors, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id });
     this.earn(army);
     const onward = army.orders;
@@ -483,7 +499,7 @@ export class Sim {
     const loser = s.factions.find((f) => f.id !== NEUTRAL && f.capital === id && f.id !== army.owner && f.alive);
     if (loser) {
       loser.alive = false;
-      for (const t of Object.values(s.towns)) if (t.owner === loser.id) { t.owner = NEUTRAL; t.rally = null; for (const b of Object.values(t.buildings)) { b.queue = 0; b.repeat = false; } }
+      for (const t of Object.values(s.towns)) if (t.owner === loser.id) { t.owner = NEUTRAL; t.rally = null; for (const b of Object.values(t.buildings)) for (const l of Object.values(b.lines)) Object.assign(l, { queue: 0, training: 0, repeat: false }); }
       for (const a of [...s.armies]) if (a.owner === loser.id) this.disband(a);
       for (const f of s.factions) if (f.id !== NEUTRAL && f.id !== loser.id && f.alive) this.note(`The ${loser.name} has fallen: ${node.name}, its capital, was taken.`, f.id, { at });
       const left = s.factions.filter((f) => f.id !== NEUTRAL && f.alive);
@@ -598,23 +614,26 @@ export class Sim {
       if (town.owner === NEUTRAL) continue;
       const owner = this.faction(town.owner), node = this.nodes.get(id)!;
       for (const [kind, b] of Object.entries(town.buildings) as [BuildingKind, Building][]) {
-        const rule = RULES.buildings[kind], unit = RULES.units[rule.trains];
+        const rule = RULES.buildings[kind];
         if (!b.done) {
           b.progress += dt / rule.time;
           if (b.progress >= 1) { b.done = true; b.progress = 0; this.note(`${rule.name} finished in ${node.name}.`, town.owner, { at: [node.x, node.y], kind: 'built' }); }
           continue;
         }
-        if (b.repeat && b.queue === 0 && owner.money >= unit.cost) { owner.money -= unit.cost; b.queue = 1; }
-        if (b.queue > 0) {
-          b.training += dt / unit.time;
-          while (b.training >= 1 && b.queue > 0) {
-            b.training -= 1;
-            b.queue--;
-            const fresh = { ...none(), [rule.trains]: 1 } as Units;
+        // Each kind of unit a building trains has its own line, and the lines run side by side.
+        for (const [kindOfUnit, line] of Object.entries(b.lines) as [UnitKind, Line][]) {
+          const unit = RULES.units[kindOfUnit];
+          if (line.repeat && line.queue === 0 && owner.money >= unit.cost) { owner.money -= unit.cost; line.queue = 1; }
+          if (line.queue <= 0) continue;
+          line.training += dt / unit.time;
+          while (line.training >= 1 && line.queue > 0) {
+            line.training -= 1;
+            line.queue--;
+            const fresh = { ...none(), [kindOfUnit]: 1 };
             // New units go straight to the rally point, if one is set and still held.
-            if (!(town.rally && s.towns[town.rally]?.owner === town.owner && this.dispatch(town.owner, id, town.rally, fresh, true))) town.garrison[rule.trains]++;
+            if (!(town.rally && s.towns[town.rally]?.owner === town.owner && this.dispatch(town.owner, id, town.rally, fresh, true))) town.garrison[kindOfUnit] = (town.garrison[kindOfUnit] || 0) + 1;
           }
-          if (!b.queue) b.training = 0;
+          if (!line.queue) line.training = 0;
         }
       }
     }
@@ -624,8 +643,8 @@ export class Sim {
       for (const t of s.graph.towns) {
         const town = s.towns[t.id], full = RULES.neutralGarrison[t.tier];
         if (town.owner !== NEUTRAL || this.besiegersOf(t.id).length) continue;
-        if (town.garrison.infantry < full.infantry) town.garrison.infantry++;
-        else if (town.garrison.vehicle < full.vehicle) town.garrison.vehicle++;
+        const short = UNIT_KINDS.find((k) => (town.garrison[k] || 0) < ((full as Partial<Units>)[k] || 0));
+        if (short) town.garrison[short] = (town.garrison[short] || 0) + 1;
       }
     }
 
@@ -640,7 +659,8 @@ export class Sim {
     for (const a of [...s.armies]) {
       if (!a.siege || !a.at || !s.armies.includes(a)) continue;
       if (s.towns[a.at].owner === a.owner) { a.siege = null; continue; }
-      a.siege.progress += dt;
+      // Artillery makes short work of walls.
+      a.siege.progress += dt * (1 + Math.min(RULES.siegeGuns.cap, RULES.siegeGuns.each * (a.artillery || 0)));
       if (a.siege.progress >= a.siege.need) this.assault(a, a.at, true);
     }
 
@@ -749,10 +769,7 @@ export class Sim {
     const town = s.towns[id];
     const mine = town?.owner === who;
     const pay = (cost: number): boolean => { if (me.money < cost) return false; me.money -= cost; return true; };
-    const asked = (max: Units): Units => ({
-      infantry: Math.min(max.infantry, Math.max(0, Math.floor(Number(c.infantry) || 0))),
-      vehicle: Math.min(max.vehicle, Math.max(0, Math.floor(Number(c.vehicle) || 0))),
-    });
+    const asked = (max: Partial<Units>): Units => each((k) => Math.min(max[k] || 0, Math.max(0, Math.floor(Number(c[k]) || 0))));
     const army = s.armies.find((a) => a.id === c.army);
     const myArmy = army?.owner === who;
     /** An army of mine camped in a town of mine, neither besieging nor retreating. */
@@ -772,7 +789,7 @@ export class Sim {
         if (!rule) return fail('unknown building');
         if (town.buildings[kind]) return fail('already built here');
         if (!pay(rule.cost)) return fail('not enough money');
-        town.buildings[kind] = { done: false, progress: 0, queue: 0, training: 0, repeat: false };
+        town.buildings[kind] = newBuilding(kind);
         return { ok: true };
       }
       case 'train':
@@ -781,8 +798,8 @@ export class Sim {
         const unit = c.unit as UnitKind, rule = RULES.units[unit];
         if (!mine) return fail('not your town');
         if (!rule) return fail('unknown unit');
-        const b = (Object.entries(town.buildings) as [BuildingKind, Building][]).find(([k, v]) => v.done && RULES.buildings[k].trains === unit)?.[1];
-        if (!b) return fail(`needs a finished ${Object.values(RULES.buildings).find((x) => x.trains === unit)!.name.toLowerCase()}`);
+        const b = Object.values(town.buildings).find((v) => v.done && v.lines[unit])?.lines[unit];
+        if (!b) return fail(`needs a finished ${Object.values(RULES.buildings).find((x) => (x.trains as readonly string[]).includes(unit))!.name.toLowerCase()}`);
         if (c.type === 'repeat') { b.repeat = !!c.on; return { ok: true }; }
         if (c.type === 'cancel') {
           // Take one unit off the training queue and give the money back.
@@ -821,8 +838,7 @@ export class Sim {
         const units = asked(src.garrison);
         if (!count(units)) return fail('no units to send');
         if (!this.dispatch(who, from, to, units)) return fail('no road leads there');
-        src.garrison.infantry -= units.infantry;
-        src.garrison.vehicle -= units.vehicle;
+        take(src.garrison, units);
         return { ok: true };
       }
       case 'muster': {
@@ -830,8 +846,7 @@ export class Sim {
         if (!mine) return fail('not your town');
         const units = asked(town.garrison);
         if (!count(units)) return fail('no units picked');
-        town.garrison.infantry -= units.infantry;
-        town.garrison.vehicle -= units.vehicle;
+        take(town.garrison, units);
         this.raise(who, units, id);
         return { ok: true };
       }
@@ -887,8 +902,7 @@ export class Sim {
         if (!camped) return fail('an army can only be split while camped in a town of yours');
         const units = asked(army);
         if (!count(units) || count(units) >= count(army)) return fail('pick some of its units, not all or none');
-        army.infantry -= units.infantry;
-        army.vehicle -= units.vehicle;
+        take(army, units);
         this.raise(who, units, army.at, { stars: army.stars ?? 0 });
         return { ok: true };
       }

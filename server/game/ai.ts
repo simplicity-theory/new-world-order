@@ -1,5 +1,5 @@
 import { RULES } from './rules.ts';
-import { attackPower, defencePower, type Faction, type Sim, type Units } from './sim.ts';
+import { UNIT_KINDS, attackPower, defencePower, type Faction, type Sim, type Units } from './sim.ts';
 
 // The rival. It plays by the same rules and through the same commands as the player.
 // It builds and trains what it can afford, keeps a guard on towns that border someone
@@ -7,7 +7,7 @@ import { attackPower, defencePower, type Faction, type Sim, type Units } from '.
 // neighbouring town when it can do so with a margin. It sees only what its own towns and
 // armies can see, and guesses at the rest.
 
-const count = (u: Units): number => u.infantry + u.vehicle;
+const count = (u: Partial<Units>): number => Object.values(u).reduce((n, v) => n + (v || 0), 0);
 
 export function think(sim: Sim, f: Faction): void {
   const s = sim.state;
@@ -32,8 +32,16 @@ export function think(sim: Sim, f: Faction): void {
     if (!st.buildings.barracks && (home || t.tier >= 2) && f.money >= RULES.buildings.barracks.cost) act({ type: 'build', town: t.id, building: 'barracks' });
     if (!st.buildings.factory && st.buildings.barracks?.done && (home || t.tier >= 2) && f.money >= RULES.buildings.factory.cost + 200) act({ type: 'build', town: t.id, building: 'factory' });
     // Keep a little in hand so upkeep does not stall everything.
-    if (st.buildings.factory?.done && st.buildings.factory.queue < 1 && f.money >= RULES.units.vehicle.cost + 60) act({ type: 'train', town: t.id, unit: 'vehicle' });
-    if (st.buildings.barracks?.done && st.buildings.barracks.queue < 2 && f.money >= RULES.units.infantry.cost + 30) act({ type: 'train', town: t.id, unit: 'infantry' });
+    if (st.buildings.factory?.done && st.buildings.factory.lines.vehicle!.queue < 1 && f.money >= RULES.units.vehicle.cost + 60) act({ type: 'train', town: t.id, unit: 'vehicle' });
+    // A couple of guns, once there is a walled town within reach to use them on.
+    if (st.buildings.factory?.done && st.buildings.factory.lines.artillery!.queue < 1 && (st.garrison.artillery || 0) < 2 && f.money >= RULES.units.artillery.cost + 100
+      && (sim.links.get(t.id) ?? []).some((l) => s.towns[l.other].owner !== f.id && sim.siegeNeed(l.other) > 0)) act({ type: 'train', town: t.id, unit: 'artillery' });
+    if (st.buildings.barracks?.done && st.buildings.barracks.lines.infantry!.queue < 2 && f.money >= RULES.units.infantry.cost + 30) act({ type: 'train', town: t.id, unit: 'infantry' });
+  }
+
+  // Spare money goes into markets, capital first: a bigger income is what breaks a stalemate.
+  for (const t of [...mine].sort((p, q) => Number(q.id === f.capital) - Number(p.id === f.capital) || q.tier - p.tier)) {
+    if (s.towns[t.id].market < RULES.maxLevel && f.money >= sim.upgradeCost(t.id, 'market') + 150) { act({ type: 'upgrade', town: t.id, upgrade: 'market' }); break; }
   }
 
   const frontier = (id: string) => (sim.links.get(id) ?? []).filter((l) => l.road.intact && s.towns[l.other].owner !== f.id);
@@ -41,8 +49,11 @@ export function think(sim: Sim, f: Faction): void {
   const spare = (id: string): Units => {
     const g = s.towns[id].garrison;
     const guard = id === f.capital ? 3 : frontier(id).length ? 2 : 0;
-    const keepInf = Math.min(g.infantry, guard), keepVeh = Math.min(g.vehicle, guard - keepInf);
-    return { infantry: g.infantry - keepInf, vehicle: g.vehicle - keepVeh };
+    // The guard is found from infantry first, then whatever else is there.
+    let left = guard;
+    const out = { ...g };
+    for (const k of UNIT_KINDS) { const kept = Math.min(out[k] || 0, left); out[k] = (out[k] || 0) - kept; left -= kept; }
+    return out;
   };
 
   // Relief: a town under siege gets everything the nearest towns can spare, if together that should break it.
@@ -92,7 +103,7 @@ export function think(sim: Sim, f: Faction): void {
     // A walled town will be besieged first, so what matters is its strength once the walls are breached.
     const targets = stops.map((id) => ({ id, need: reckon(id, sim.siegeNeed(id) > 0) })).sort((a, b) => a.need - b.need);
     if (targets.length) {
-      if (attackPower(force) > targets[0].need * MARGIN + 0.5) act({ type: 'move', from: t.id, to: targets[0].id, ...force });
+      if (attackPower(force, true) > targets[0].need * MARGIN + 0.5) act({ type: 'move', from: t.id, to: targets[0].id, ...force });
       continue;
     }
     // Nothing to attack from here: move up to the nearest held town that has something in reach.
