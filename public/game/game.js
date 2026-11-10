@@ -901,6 +901,48 @@ function chime(kind) {
   } catch { /* no audio available: play silently */ }
 }
 
+// ----- Rules reference -----
+// Written out from the rule values the server sent, so it is always in step with the game being played.
+
+function guideHtml() {
+  const r = game.rules, pct = (v) => `${Math.round(v * 100)}%`;
+  const units = Object.entries(r.units).map(([k, u]) => `<tr><td>${UI[k]}${u.name}</td><td>${u.cost}</td><td>${u.time} s</td><td>${u.attack}${u.assault ? ` (${u.assault} vs towns)` : ''}</td><td>${u.defence}</td><td>${u.upkeep}</td>
+    <td>${r.speed[k].tertiary}–${r.speed[k].motorway}</td><td>${Object.values(r.buildings).find((b) => b.trains.includes(k)).name}</td></tr>`).join('');
+  const towns = TIERS.map((name, t) => `<tr><td>${name}</td><td>${r.income[t]}</td><td>${Object.entries(r.neutralGarrison[t]).filter(([, n]) => n).map(([k, n]) => `${n} ${r.units[k].name.toLowerCase()}`).join(', ')}</td>
+    <td>${t === 2 ? `${r.siege.town} s` : t === 3 ? `${r.siege.city} s` : 'none'}</td><td>${r.loot[t]}</td></tr>`).join('');
+  return `
+    <h3>The aim</h3>
+    <p>Hold ${pct(r.winShare)} of the towns on the map, or knock out every rival by taking its capital (marked ★). Lose your own capital and you are out.</p>
+    <h3>Money</h3>
+    <p>Each town you hold earns money every minute. A market adds ${pct(r.upgrades.market.perLevel)} per level, a port ${pct(r.portBonus)} and a railway ${pct(r.railBonus)}.
+      A town cut off from your capital (no chain of your towns and open roads back to it) earns ${pct(r.cutOffShare)}; a besieged town earns nothing. Every unit costs upkeep each minute, in a garrison or an army. Taking a town brings loot.</p>
+    <table><tr><th>Town</th><th>Income / min</th><th>Neutral defenders</th><th>Siege for its size</th><th>Loot</th></tr>${towns}</table>
+    <h3>Units</h3>
+    <table><tr><th>Unit</th><th>Cost</th><th>Time</th><th>Attack</th><th>Defence</th><th>Upkeep</th><th>Speed km/h</th><th>Trained at</th></tr>${units}</table>
+    <p>The ${r.buildings.barracks.name.toLowerCase()} costs ${r.buildings.barracks.cost} and the ${r.buildings.factory.name.toLowerCase()} ${r.buildings.factory.cost}. A mixed army moves at the pace of its slowest unit. Scouts see ${r.units.scout.sight / 1000} km; other armies see ${r.vision.group / 1000} km and towns ${r.vision.town / 1000} km.</p>
+    <h3>Garrisons and armies</h3>
+    <p>Units you train join the town's garrison. Sending them out, or mustering them, forms an army: it has a name, camps beside whatever town it stops at, and helps defend that town.
+      Armies can be split, merged, reinforced from the garrison, or stood down into it. An army earns a star for each fight it wins, up to ${r.experience.max}; each star adds ${pct(r.experience.perStar)} to its strength.</p>
+    <h3>Fighting</h3>
+    <p>A fight compares the attackers' attack strength with the defenders' defence strength; the stronger side wins, and a tie goes to the defender.
+      A town multiplies its defenders' strength: +${pct(r.defenceBonus.hill)} on a hill, +${pct(r.defenceBonus.river)} on a river, +${pct(r.defenceBonus.fort)} per level of fortification.
+      The winner loses more the closer the fight was. The loser keeps ${pct(r.retreat.base)}–${pct(r.retreat.base + r.retreat.close)} of its units and retreats to the nearest town its side holds, if it can reach one; neutral defenders do not retreat.</p>
+    <p>An army halts at the first town on its route that you do not hold. A walled town must be besieged first: ${r.siege.perFort} s per level of fortification, plus the time for its size. A full siege takes the fortifications out of the fight;
+      each artillery piece speeds it by ${pct(r.siegeGuns.each)}. You can storm early and face the walls in full. An army arriving at its own besieged town fights the besiegers, with the garrison adding ${pct(r.sortie)} of its attack.</p>
+    <h3>Roads, rail and sea</h3>
+    <p>Armies follow roads, and choose the quickest route for what they are. Cutting a road costs ${r.roads.cut} (${r.roads.cutBridge} at a bridge) and mending it ${r.roads.repair} (${r.roads.repairBridge} and longer at a bridge); you need a town at one end.
+      Railways (${r.speed.infantry.rail} km/h) and sea crossings (${r.speed.infantry.sea} km/h) carry any army, but only between two towns you hold.</p>
+    <h3>Other ways to gain ground</h3>
+    <p>A neutral town one road from yours, and in sight, can be bought: the price rises with its defenders and its size, and half of them stay on as your garrison.
+      A truce with a rival costs ${r.truce.perTown} per town it holds (at least ${r.truce.min}) and lasts ${Math.round(r.truce.lasts / 60)} minutes, during which neither of you can attack the other.</p>`;
+}
+function openGuide(on) {
+  $('guide').style.display = on ? 'flex' : 'none';
+  if (on) { $('guide-body').innerHTML = guideHtml(); $('help').style.display = 'none'; }
+}
+$('open-guide').addEventListener('click', () => openGuide(true));
+$('close-guide').addEventListener('click', () => openGuide(false));
+
 // ----- Alerts -----
 // What needs attention right now, as a column of buttons. Click one to go to the next place it is about.
 
@@ -1364,7 +1406,8 @@ document.addEventListener('keydown', (e) => {
   if (!game || !live || e.target.matches('input, select, textarea')) return;
   const k = e.key;
   if (k === 'Escape') {
-    if (sheetTab) openSheet(null);
+    if ($('guide').style.display === 'flex') openGuide(false);
+    else if (sheetTab) openSheet(null);
     else if ($('help').style.display === 'block') $('help').style.display = 'none';
     else if (mode) { mode = null; renderUi(true); } else select({});
     return;

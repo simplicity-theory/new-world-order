@@ -199,6 +199,18 @@
     .who { width: 120px; }
   }
 
+  /* Rules reference, written from the live rule values. */
+  #guide { left: 50%; top: 78px; transform: translateX(-50%); width: min(820px, calc(100% - 40px)); max-height: calc(100% - 120px); display: none; flex-direction: column; z-index: 6; }
+  #guide header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
+  #guide-body { overflow: auto; padding: 4px 16px 16px; line-height: 1.5; }
+  #guide h3 { margin: 16px 0 4px; font-size: 14px; }
+  #guide p { margin: 4px 0; }
+  #guide table { border-collapse: collapse; margin: 6px 0; font-variant-numeric: tabular-nums; }
+  #guide th { text-align: right; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 2px 10px; }
+  #guide th:first-child, #guide td:first-child { text-align: left; }
+  #guide td { padding: 3px 10px; text-align: right; border-top: 1px solid #edf0f3; }
+  #guide td svg { width: 16px; height: 16px; vertical-align: -3px; margin-right: 5px; }
+
   /* Hover card for a town. */
   #card { display: none; z-index: 5; padding: 9px 12px; max-width: 320px; pointer-events: none; font-size: 12.5px; line-height: 1.45; }
   #card h4 { margin: 0 0 5px; padding-left: 7px; border-left: 4px solid var(--muted); font-size: 14px; }
@@ -259,6 +271,7 @@
 </div>
 <div id="help" class="card">
   <div class="menu"><button id="toggle-sound" title="Sound effects on or off">Sound</button>
+    <button id="open-guide" title="How the game works, with the current numbers">Rules</button>
     <button id="autoplay" title="Let the computer play your side while you watch; press again to take over">Auto-play</button></div>
   <table>
     <tr><td><kbd>Space</kbd></td><td>Pause or resume</td></tr>
@@ -297,6 +310,7 @@
   <div id="sheet-body"></div>
 </div>
 <div id="hint" class="card"><span id="hint-text"></span><button id="hint-close" title="Hide these tips">✕</button></div>
+<div id="guide" class="card"><header><b>How Conquer works</b><span class="spacer"></span><button id="close-guide" title="Close (Esc)">✕</button></header><div id="guide-body"></div></div>
 <div id="card" class="card"></div>
 <div id="toast" class="card"></div>
 <div id="setup">
