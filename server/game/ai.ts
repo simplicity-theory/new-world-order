@@ -32,6 +32,11 @@ export function think(sim: Sim, f: Faction): void {
     if (a.owner === f.id && a.at && !a.siege && !a.retreating && s.towns[a.at].owner === f.id) act({ type: 'garrison', army: a.id });
   }
 
+  // An army left standing outside someone else's town (a truce caught it there) is brought back to the capital if a road allows.
+  for (const a of s.armies) {
+    if (a.owner === f.id && a.at && !a.siege && !a.retreating && s.towns[a.at].owner !== f.id && a.at !== f.capital) act({ type: 'redirect', army: a.id, to: f.capital });
+  }
+
   // Economy: a base in the capital first, then in any larger town; a factory once there is money to spare.
   for (const t of mine) {
     const st = s.towns[t.id];

@@ -722,11 +722,12 @@ function reportHtml(e) {
     ${row('You', r.you)}${row(r.them.owner === 0 ? 'Defenders' : esc(faction(r.them.owner)?.name ?? 'Enemy'), r.them)}</table>`;
 }
 
-function drawEvents() {
+let fightsOnly = false;
+function drawEvents(force) {
   const el = $('events');
   const fresh = live.events.filter((e) => (e.id ?? 0) > lastEvent);
-  if (fresh.length || !el.children.length) {
-    el.innerHTML = live.events.map((e) => `<div ${e.at ? `data-x="${e.at[0]}" data-y="${e.at[1]}" title="Go there"` : ''} class="${e.report ? (e.report.won ? 'win' : 'loss') : ''}"><time>${clockText(e.clock)}</time>${esc(e.text)}</div>`).join('')
+  if (force || fresh.length || !el.children.length) {
+    el.innerHTML = live.events.filter((e) => !fightsOnly || e.report || e.kind === 'siege').map((e) => `<div ${e.at ? `data-x="${e.at[0]}" data-y="${e.at[1]}" title="Go there"` : ''} class="${e.report ? (e.report.won ? 'win' : 'loss') : ''}"><time>${clockText(e.clock)}</time>${esc(e.text)}</div>`).join('')
       + (live.growing ? '<div>Mapping new territory…</div>' : '');
     el.scrollTop = el.scrollHeight;
   }
@@ -754,6 +755,7 @@ $('events').addEventListener('click', (e) => {
   const row = e.target.closest('[data-x]');
   if (row) goTo(Number(row.dataset.x), Number(row.dataset.y));
 });
+$('log-fights').addEventListener('click', () => { fightsOnly = !fightsOnly; $('log-fights').classList.toggle('on', fightsOnly); drawEvents(true); });
 $('log-toggle').addEventListener('click', () => {
   const open = $('log').classList.toggle('open');
   $('log-toggle').textContent = open ? 'fewer' : 'more';
@@ -1021,6 +1023,14 @@ function drawMini() {
     g.fillStyle = `${colorOf(p.owner)}66`;
     g.beginPath();
     for (const r of p.rings) { r.forEach(([x, y], i) => { const q = to(x, y); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); }); g.closePath(); }
+    g.fill('evenodd');
+  }
+  // Fog: everything outside what you can see is dimmed, as on the main map.
+  if (seen.length) {
+    g.fillStyle = 'rgba(39, 49, 61, 0.28)';
+    g.beginPath();
+    g.rect(x0, y0, x1 - x0, y1 - y0);
+    for (const r of seen) { r.forEach(([x, y], i) => { const q = to(x, y); if (i) g.lineTo(q[0], q[1]); else g.moveTo(q[0], q[1]); }); g.closePath(); }
     g.fill('evenodd');
   }
   for (const t of game.graph.towns) {
@@ -1541,7 +1551,7 @@ function play(full) {
   stream.addEventListener('tick', (e) => onTick(JSON.parse(e.data)));
   stream.addEventListener('graph', (e) => onGraph(JSON.parse(e.data)));
   stream.addEventListener('territory', (e) => { land = JSON.parse(e.data); drawLand(); drawMini(); });
-  stream.addEventListener('sight', (e) => { seen = JSON.parse(e.data); drawFog(); });
+  stream.addEventListener('sight', (e) => { seen = JSON.parse(e.data); drawFog(); drawMini(); });
 }
 
 async function refreshList(selectId) {

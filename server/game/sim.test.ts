@@ -329,7 +329,8 @@ test('a neutral town next door can be bought instead of fought', () => {
   const { sim, s, me } = game();
   assert.equal(sim.bribeCost('d'), Math.round(4.5 * RULES.bribe.perStrength + 2 * RULES.bribe.perTier));
   assert.deepEqual(sim.command({ type: 'bribe', town: 'd' }), { error: 'not enough money' });
-  assert.deepEqual(sim.command({ type: 'bribe', town: 'e' }), { error: 'it must be one road away from a town you hold' });
+  assert.deepEqual(sim.command({ type: 'bribe', town: 'e' }), { error: 'it is out of sight' });
+  assert.deepEqual(sim.command({ type: 'bribe', town: 'a' }), { error: 'it is out of sight' });
   me.money = 1000;
   assert.deepEqual(sim.command({ type: 'bribe', town: 'd' }), { ok: true });
   assert.equal(s.towns.d.owner, PLAYER);
@@ -377,6 +378,84 @@ test('a truce stops both sides attacking each other until it runs out', () => {
   run(sim, RULES.truce.lasts + 1);
   assert.equal(sim.atPeace(PLAYER, RIVAL), false);
   assert.deepEqual(sim.command({ type: 'move', from: near, to: home, infantry: 20 }), { ok: true });
+});
+
+test('commands naming things that are not in the rules are refused and cost nothing', () => {
+  const { sim, s, me } = game();
+  s.towns.c.buildings.barracks = newBuilding('barracks', true);
+  for (const bad of ['toString', 'valueOf', 'constructor', '__proto__', 'hasOwnProperty']) {
+    assert.ok('error' in sim.command({ type: 'upgrade', town: 'c', upgrade: bad }), `upgrade ${bad}`);
+    assert.ok('error' in sim.command({ type: 'train', town: 'c', unit: bad }), `train ${bad}`);
+    assert.ok('error' in sim.command({ type: 'cancel', town: 'c', unit: bad }), `cancel ${bad}`);
+    assert.ok('error' in sim.command({ type: 'build', town: 'c', building: bad }), `build ${bad}`);
+  }
+  assert.equal(me.money, RULES.startMoney);
+  assert.deepEqual(Object.keys(s.towns.c).sort(), ['buildings', 'fort', 'garrison', 'market', 'owner', 'rally', 'supplied']);
+});
+
+test('a retreating army that ends up taking a town can be given orders again', () => {
+  const { sim, s } = game();
+  give(sim, 'd', PLAYER);
+  s.towns.d.garrison.infantry = 4;
+  sim.command({ type: 'move', from: 'd', to: 'e', infantry: 4 }); // 4 against 4.5: it will be beaten and fall back on D
+  run(sim, 4000 / speedOn({ infantry: 1 }, 'secondary') + 1);
+  const army = s.armies[0];
+  assert.equal(army.retreating, true);
+  s.towns.d.owner = NEUTRAL; // D changes hands, undefended, before it gets back
+  s.towns.d.garrison = empty();
+  run(sim, 60);
+  assert.equal(s.towns.d.owner, PLAYER);
+  assert.equal(army.retreating, false);
+  assert.deepEqual(sim.command({ type: 'redirect', army: army.id, to: 'c' }), { ok: true });
+});
+
+test('a truce lifts sieges between the two sides, and nobody is destroyed or attacked during it', () => {
+  const { sim, s, me } = game(true);
+  const home = sim.faction(RIVAL).capital, near = home === 'a' ? 'b' : 'd';
+  give(sim, near, RIVAL, 2);
+  s.towns[near].fort = 3;
+  s.towns.c.garrison.infantry = 30;
+  sim.command({ type: 'move', from: 'c', to: near, infantry: 30 });
+  run(sim, 4000 / speedOn({ infantry: 1 }, 'secondary') + 2);
+  const army = s.armies[0];
+  assert.ok(army.siege);
+  me.money = 1000;
+  assert.deepEqual(sim.command({ type: 'truce', with: RIVAL }), { error: 'lift your siege first' });
+  // The rival may ask instead; the siege is lifted and the army heads home.
+  sim.faction(RIVAL).money = 1000;
+  assert.deepEqual(sim.command({ type: 'truce', with: PLAYER }, RIVAL), { ok: true });
+  assert.equal(army.siege, null);
+  assert.deepEqual(sim.command({ type: 'storm', army: army.id }), { error: 'that army is not besieging anything' });
+  run(sim, 120);
+  assert.equal(s.towns[near].owner, RIVAL);
+  assert.equal(army.at, 'c');
+  assert.equal(army.infantry, 30);
+});
+
+test('gathering garrisons never turns into an attack on a town in between', () => {
+  const { sim, s } = game();
+  give(sim, 'a', PLAYER);
+  s.towns.a.garrison = { ...empty(), vehicle: 6 }; // for vehicles the quick way from A to C is through neutral B
+  assert.deepEqual(sim.route('a', 'c', { vehicle: 6 }, PLAYER)!.legs.map((l) => l.road), ['a|b', 'b|c']);
+  assert.deepEqual(sim.command({ type: 'gather', town: 'c' }), { ok: true });
+  assert.deepEqual(s.armies[0].path.map((l) => l.road), ['a|c']);
+  run(sim, 200);
+  assert.equal(s.towns.b.owner, NEUTRAL);
+  assert.equal(s.towns.c.garrison.vehicle, 6);
+});
+
+test('what is out of sight stays hidden: fortifications, plans and distant cut roads', () => {
+  const { sim, s, me } = game(true);
+  s.towns.a.fort = 2;
+  const v = sim.view(PLAYER) as any;
+  assert.equal(v.towns.a.visible, false);
+  assert.equal(v.towns.a.fort, null);
+  assert.equal(v.towns.a.siege, 0);
+  assert.equal(v.towns.a.defence, 1);
+  s.graph.roads.find((r) => r.id === 'a|b')!.intact = false;
+  assert.equal((sim.view(PLAYER) as any).roads.length, 1, 'known about once one end has been seen');
+  me.seen = me.seen.filter((id) => id !== 'a' && id !== 'b');
+  assert.equal((sim.view(PLAYER) as any).roads.length, 0, 'a cut road between two unseen towns is not reported');
 });
 
 test('a camped army can be ordered to march', () => {

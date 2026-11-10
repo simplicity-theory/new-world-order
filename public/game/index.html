@@ -133,7 +133,8 @@
   /* Event log: recent events; click one to go there. */
   #log { left: 12px; bottom: 14px; width: 276px; padding: 8px 0 6px; }
   #log header { display: flex; align-items: center; padding: 0 12px 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-  #log header button { margin-left: auto; padding: 1px 7px; font-size: 11px; }
+  #log header button { padding: 1px 7px; font-size: 11px; text-transform: none; letter-spacing: 0; }
+  #log header button:first-of-type { margin-left: auto; margin-right: 4px; }
   #events { max-height: 88px; overflow: hidden; }
   #log.open #events { max-height: 46vh; overflow: auto; }
   #events div { padding: 3px 12px; color: var(--muted); }
@@ -306,7 +307,7 @@
 <div id="prod" class="card"></div>
 <div id="alerts"></div>
 <div id="minibox" class="card"><canvas id="mini" width="392" height="392" aria-label="Minimap"></canvas></div>
-<div id="log" class="card"><header>Events <button id="log-toggle" title="Show more or fewer events">more</button></header><div id="events"></div></div>
+<div id="log" class="card"><header>Events <button id="log-fights" title="Show only fights and sieges">fights</button><button id="log-toggle" title="Show more or fewer events">more</button></header><div id="events"></div></div>
 <div id="cmd" class="card"></div>
 <div id="sheet" class="card">
   <header><button data-tab="economy" class="on">Economy</button><button data-tab="armies">Armies</button><button data-tab="rivals">Rivals</button><span class="spacer"></span><button id="close-sheet" title="Close (Esc)">✕</button></header>

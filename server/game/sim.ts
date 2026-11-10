@@ -398,9 +398,11 @@ export class Sim {
   }
 
   /** Quickest route for these units between two towns, over intact roads; null if there is none. */
-  route(from: string, to: string, units: Partial<Units> & { owner?: number }, owner = units.owner): { legs: Leg[]; time: number } | null {
+  route(from: string, to: string, units: Partial<Units> & { owner?: number }, owner = units.owner, ownGround = false): { legs: Leg[]; time: number } | null {
     if (from === to) return { legs: [], time: 0 };
-    const { dist, legsTo } = this.search(from, to, (r) => r.length / speedOn(units, r.kind), undefined, owner);
+    // `ownGround` keeps the route to towns the side already holds, for moves that must not turn into attacks.
+    const through = ownGround ? (id: string) => this.state.towns[id].owner === owner : undefined;
+    const { dist, legsTo } = this.search(from, to, (r) => r.length / speedOn(units, r.kind), through, owner);
     return dist.has(to) ? { legs: legsTo(to), time: dist.get(to)! } : null;
   }
 
@@ -457,7 +459,7 @@ export class Sim {
 
   /** Raise an army from a town and send it on its way. */
   private dispatch(owner: number, from: string, to: string, units: Units, settle = false): boolean {
-    const r = this.route(from, to, units, owner);
+    const r = this.route(from, to, units, owner, settle);
     if (!r || !r.legs.length) return false;
     const army = this.raise(owner, units, from, settle ? { settle, name: 'Recruits' } : {});
     this.march(army, r.legs, to);
@@ -465,13 +467,24 @@ export class Sim {
   }
 
   /** Beaten units fall back from a town towards the nearest town their side holds. Returns how many got away. */
-  private retreatFrom(units: Units, owner: number, town: string, name?: string): number {
+  private retreatFrom(units: Units, owner: number, town: string, name?: string, stars = 0): number {
     if (owner === NEUTRAL || !count(units)) return 0;
     const home = this.wayHome(owner, town, units);
     if (!home) return 0;
-    const army = this.raise(owner, units, town, { retreating: true, ...(name ? { name } : {}) });
+    const army = this.raise(owner, units, town, { retreating: true, stars, ...(name ? { name } : {}) });
     this.march(army, home.legs, home.to);
     return count(units);
+  }
+
+  /**
+   * An army finds itself at a town it may not attack (a truce). It heads for the nearest town
+   * of its own if it can get there through its own ground; otherwise it waits outside, idle.
+   */
+  private standOff(army: Army, id: string): void {
+    const home = this.wayHome(army.owner, id, army);
+    Object.assign(army, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id });
+    if (home) this.march(army, home.legs, home.to);
+    else this.note(`${army.name} is waiting outside ${this.nodes.get(id)!.name}: there is a truce, and no way home through your own towns.`, army.owner, { at: [this.nodes.get(id)!.x, this.nodes.get(id)!.y] });
   }
 
   /** An army storms the town it has reached. `breached` means a full siege has made the fortifications useless. */
@@ -495,10 +508,11 @@ export class Sim {
       for (const a of camped) Object.assign(a, share(a, kept));
       for (const a of camped) { if (!count(a)) this.disband(a); else this.earn(a); }
       const defLeft = this.forceAt(id);
-      if (count(defenders) && !count(defLeft)) town.garrison.infantry = 1;
+      // Defenders who held never round away to nothing: one of whatever there was most of stays.
+      if (count(defenders) && !count(defLeft)) town.garrison = share(defenders, 0, true);
       const away = army.retreating ? none() : share(army, r.keep);
       this.disband(army);
-      const escaped = this.retreatFrom(away, army.owner, id, army.name);
+      const escaped = this.retreatFrom(away, army.owner, id, army.name, army.stars);
       const left = escaped ? away : none();
       this.score(before, army.owner, count(defenders) - count(this.forceAt(id)), count(attackers) - count(left));
       this.note(`Attack on ${node.name} failed${escaped ? `; ${escaped} of ${count(attackers)} got away` : `: all ${count(attackers)} lost`}.`, army.owner, { at, kind: 'battle', report: report('att', left, this.forceAt(id)) });
@@ -514,7 +528,7 @@ export class Sim {
     town.garrison = none();
     town.rally = null;
     for (const b of Object.values(town.buildings)) { if (!b.done) b.progress = 0; for (const l of Object.values(b.lines)) Object.assign(l, { queue: 0, training: 0, repeat: false }); }
-    Object.assign(army, survivors, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id });
+    Object.assign(army, survivors, { at: id, siege: null, path: [], leg: 0, dist: 0, to: id, retreating: false });
     this.earn(army);
     const onward = army.orders;
     for (const other of this.besiegersOf(id)) if (other.owner === army.owner) other.siege = null;
@@ -549,8 +563,7 @@ export class Sim {
     if (town.owner !== army.owner && this.atPeace(town.owner, army.owner)) {
       // A truce: the army may pass through, but cannot stay or fight. If this was where it was going, it turns for home.
       if (!last) return true;
-      const home = this.wayHome(army.owner, id, army);
-      if (home) { army.at = id; this.march(army, home.legs, home.to); } else this.disband(army);
+      this.standOff(army, id);
       return false;
     }
     if (town.owner !== army.owner) {
@@ -576,7 +589,7 @@ export class Sim {
         Object.assign(army, share(army, 1 - r.loss, true));
         this.earn(army);
         let fled = 0;
-        for (const b of besiegers) { this.disband(b); fled += this.retreatFrom(share(b, r.keep), b.owner, id, b.name); }
+        for (const b of besiegers) { this.disband(b); fled += this.retreatFrom(share(b, r.keep), b.owner, id, b.name, b.stars); }
         this.note(`${army.name} broke the siege of ${node.name}.`, army.owner, { at, kind: 'battle',
           report: { kind: 'field', place: `outside ${node.name}`, won: true, you: { before: mine, after: only(army), power: ap }, them: { owner: besiegers[0].owner, before: enemy, after: share(enemy, fled ? r.keep : 0), power: bp } } });
         for (const o of new Set(besiegers.map((b) => b.owner))) this.note(`Your siege of ${node.name} was broken.`, o, { at, kind: 'battle',
@@ -697,6 +710,7 @@ export class Sim {
     for (const a of [...s.armies]) {
       if (!a.siege || !a.at || !s.armies.includes(a)) continue;
       if (s.towns[a.at].owner === a.owner) { a.siege = null; continue; }
+      if (this.atPeace(a.owner, s.towns[a.at].owner)) { this.standOff(a, a.at); continue; }
       // Artillery makes short work of walls.
       a.siege.progress += dt * (1 + Math.min(RULES.siegeGuns.cap, RULES.siegeGuns.each * (a.artillery || 0)));
       if (a.siege.progress >= a.siege.need) this.assault(a, a.at, true);
@@ -814,7 +828,10 @@ export class Sim {
     const id = typeof c.town === 'string' ? c.town : '';
     const town = s.towns[id];
     const mine = town?.owner === who;
-    const pay = (cost: number): boolean => { if (me.money < cost) return false; me.money -= cost; return true; };
+    // A cost that is not a real, non-negative number is refused outright, so a bad command can never make money meaningless.
+    const pay = (cost: number): boolean => { if (!(cost >= 0) || !(me.money >= cost)) return false; me.money -= cost; return true; };
+    /** Look a name up in a rules table, accepting only the table's own entries. */
+    const pick = <T extends object>(table: T, key: unknown): T[keyof T] | undefined => (typeof key === 'string' && Object.hasOwn(table, key) ? table[key as keyof T] : undefined);
     const asked = (max: Partial<Units>): Units => each((k) => Math.min(max[k] || 0, Math.max(0, Math.floor(Number(c[k]) || 0))));
     const army = s.armies.find((a) => a.id === c.army);
     const myArmy = army?.owner === who;
@@ -835,7 +852,7 @@ export class Sim {
         s.dismissed = true;
         return { ok: true };
       case 'build': {
-        const kind = c.building as BuildingKind, rule = RULES.buildings[kind];
+        const kind = c.building as BuildingKind, rule = pick(RULES.buildings, kind);
         if (!mine) return fail('not your town');
         if (!rule) return fail('unknown building');
         if (town.buildings[kind]) return fail('already built here');
@@ -846,7 +863,7 @@ export class Sim {
       case 'train':
       case 'repeat':
       case 'cancel': {
-        const unit = c.unit as UnitKind, rule = RULES.units[unit];
+        const unit = c.unit as UnitKind, rule = pick(RULES.units, unit);
         if (!mine) return fail('not your town');
         if (!rule) return fail('unknown unit');
         const b = Object.values(town.buildings).find((v) => v.done && v.lines[unit])?.lines[unit];
@@ -868,7 +885,7 @@ export class Sim {
       case 'upgrade': {
         const kind = c.upgrade as UpgradeKind;
         if (!mine) return fail('not your town');
-        if (!RULES.upgrades[kind]) return fail('unknown upgrade');
+        if (!pick(RULES.upgrades, kind)) return fail('unknown upgrade');
         if (town[kind] >= RULES.maxLevel) return fail('already at the top level');
         if (!pay(this.upgradeCost(id, kind))) return fail('not enough money');
         town[kind]++;
@@ -885,7 +902,7 @@ export class Sim {
         them.money += this.truceCost(them.id);
         (s.truces ??= []).push({ a: who, b: them.id, until: s.clock + RULES.truce.lasts });
         // Armies already marching on each other turn back when they arrive; sieges between the two are lifted.
-        for (const a of s.armies) if (a.siege && a.at && ((a.owner === them.id && s.towns[a.at].owner === who) || (a.owner === who && s.towns[a.at].owner === them.id))) { const home = this.wayHome(a.owner, a.at, a); if (home) this.march(a, home.legs, home.to); }
+        for (const a of [...s.armies]) if (a.siege && a.at && ((a.owner === them.id && s.towns[a.at].owner === who) || (a.owner === who && s.towns[a.at].owner === them.id))) this.standOff(a, a.at);
         this.note(`Truce agreed with the ${them.name} for ${Math.round(RULES.truce.lasts / 60)} minutes.`, who);
         this.note(`Truce agreed with ${who === PLAYER ? 'the player' : `the ${me.name}`}.`, them.id);
         return { ok: true };
@@ -893,6 +910,7 @@ export class Sim {
       case 'bribe': {
         // Buy a neutral town outright. It must be next door to a town of yours, and in sight.
         if (!town || town.owner !== NEUTRAL) return fail('only a neutral town can be bought');
+        if (!this.visible(who).has(id)) return fail('it is out of sight');
         if (!(this.links.get(id) ?? []).some((l) => l.road.intact && s.towns[l.other].owner === who)) return fail('it must be one road away from a town you hold');
         if (this.besiegersOf(id).length) return fail('it is under siege');
         if (!pay(this.bribeCost(id))) return fail('not enough money');
@@ -975,11 +993,13 @@ export class Sim {
         else { army.path = [{ road: leg.road, rev: !leg.rev }, ...behind!.legs]; army.dist = road.length - army.dist; }
         army.leg = 0;
         army.to = to;
+        army.orders = [];
         return { ok: true };
       }
       case 'storm': {
         // Give up on the siege and go in now, against the full fortifications.
         if (!myArmy || !army.siege || !army.at) return fail('that army is not besieging anything');
+        if (this.atPeace(who, s.towns[army.at].owner)) return fail('you have a truce with them');
         this.assault(army, army.at, false);
         return { ok: true };
       }
@@ -1070,10 +1090,11 @@ export class Sim {
         // Everyone who would defend it, their strength behind the walls and once the walls are breached, and how long a siege takes.
         force: vis ? this.forceAt(t.id) : null,
         strength: vis ? this.strengthOf(t.id) : null, breached: vis ? this.strengthOf(t.id, true) : null,
-        siege: this.siegeNeed(t.id), besieged: vis && this.besiegersOf(t.id).length > 0,
+        // Out of sight, only what follows from the town's size and site is given; its fortifications stay unknown.
+        siege: vis ? this.siegeNeed(t.id) : this.siegeNeed(t.id) - st.fort * RULES.siege.perFort, besieged: vis && this.besiegersOf(t.id).length > 0,
         // The price of buying it, if it is neutral, in sight and next to a town of the viewer's.
         bribe: vis && st.owner === NEUTRAL && (this.links.get(t.id) ?? []).some((l) => l.road.intact && s.towns[l.other].owner === who) ? this.bribeCost(t.id) : null,
-        defence: this.defenceOf(t.id), fort: vis ? st.fort : null,
+        defence: this.defenceOf(t.id, !vis), fort: vis ? st.fort : null,
         ...(own ? { buildings: st.buildings, market: st.market, rally: st.rally, supplied: st.supplied, income: this.incomeOf(t.id),
           costs: { market: this.upgradeCost(t.id, 'market'), fort: this.upgradeCost(t.id, 'fort') } } : {}),
       };
@@ -1086,8 +1107,10 @@ export class Sim {
         known: s.graph.towns.filter((t) => seen.has(t.id) && s.towns[t.id].owner === f.id).length,
         inView: s.graph.towns.filter((t) => visible.has(t.id) && s.towns[t.id].owner === f.id).reduce((n, t) => n + count(this.forceAt(t.id)), 0) })),
       towns,
-      armies: s.armies.filter((a) => a.owner === who || (a.at ? visible.has(a.at) : this.canSee(who, this.position(a)))),
-      roads: s.graph.roads.filter((r) => !r.intact).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
+      // Other sides' armies in view are shown with where they are heading, but not what they plan after that.
+      armies: s.armies.filter((a) => a.owner === who || (a.at ? visible.has(a.at) : this.canSee(who, this.position(a)))).map((a) => (a.owner === who ? a : { ...a, orders: [] })),
+      // A cut road is known about once either of its ends has been seen.
+      roads: s.graph.roads.filter((r) => !r.intact && (seen.has(r.a) || seen.has(r.b))).map((r) => ({ id: r.id, cutAt: r.cutAt, repair: r.repair })),
       events: s.events.filter((e) => e.to === who).slice(-40),
       winner: s.winner, dismissed: s.dismissed, settings: s.settings,
       record: s.tally[who] ?? { won: 0, lost: 0, casualties: 0 },
