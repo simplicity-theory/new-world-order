@@ -1107,6 +1107,7 @@ function cmdHtml() {
     if (others) html += slot({ key: 'g', icon: UI.merge, does: 'merge', caption: 'Merge', badge: others + 1, title: `Combine with the ${others > 1 ? `${others} other armies` : 'other army'} here` });
     if (free) {
       html += slot({ key: 'x', icon: UI.split, does: 'split', caption: 'Split', disabled: pickAll || !going || going >= n, title: 'Pick some of its cards, then split them off as a new army' });
+      if (total(state(a.at).garrison)) html += slot({ key: 'j', icon: UI.merge, does: 'reinforce', caption: 'Take all', badge: total(state(a.at).garrison), title: `Add the whole garrison of ${town(a.at).name} to this army` });
       html += slot({ key: 'v', icon: UI.fort, does: 'garrison', caption: 'Stand down', title: `Dissolve the army into the garrison of ${town(a.at).name}` });
     }
     html += slot({ key: 'n', icon: UI.flag, does: 'rename', caption: 'Rename', title: 'Give this army a name' });
@@ -1161,6 +1162,8 @@ function cmdHtml() {
   html += `<div class="mid">${banners}<div class="pick"><span>${all ? `<b>${going}</b> of ${all} in the garrison selected` : 'Garrison'}</span>
       ${all > 1 ? `<button data-do="pick:all" data-key="a" class="mini ${pickAll ? 'on' : ''}" title="Select every unit (A)">All</button><button data-do="pick:half" class="mini" title="Select half">Half</button>` : ''}
       ${all ? `<span class="tip">drag or right-click to send</span>` : ''}</div>${tray(s.garrison, PLAYER, true)}</div><div class="slots">`;
+  const callable = game.graph.roads.some((r) => (r.a === id || r.b === id) && !cutState(r.id) && mine(r.a === id ? r.b : r.a) && total(state(r.a === id ? r.b : r.a).garrison));
+  if (callable) html += slot({ key: 'c', icon: UI.merge, does: 'gather', caption: 'Gather', title: 'Call in the garrisons of your neighbouring towns to join the garrison here' });
   if (all) html += slot({ key: 'y', icon: UI.flag, does: 'muster', caption: 'Muster', disabled: !going, title: 'Form the selected units into an army camped here, ready for orders' }) + '<span class="gap"></span>';
   for (const [kind, rule] of Object.entries(rules.buildings)) {
     const b = s.buildings[kind], icon = kind === 'barracks' ? UI.base : UI.factory, key = BUILD_KEY[kind];
@@ -1215,8 +1218,9 @@ function renderUi(force) {
   const afford = [50, 60, 100, 120, 150, 200, 240, 300, 350, 360, 400, 500, 600, 800, 1000, 1500].map((c) => live.me.money >= c);
   const g = selArmy !== null ? army(selArmy) : null;
   const key = JSON.stringify([selTowns, selArmy, selRoad, mode, details, afford, live.roads, pickAll, [...picked], selMany.map((id) => { const a = army(id); return a && [a.id, a.at, total(a)]; }),
-    g && [g.name, g.at, g.to, g.infantry, g.vehicle, g.retreating, g.siege && Math.round(100 * g.siege.progress / g.siege.need), g.at && armiesAt(g.at).length],
+    g && [g.name, g.at, g.to, total(g), g.at && total(state(g.at).garrison ?? {}), g.retreating, g.siege && Math.round(100 * g.siege.progress / g.siege.need), g.at && armiesAt(g.at).length],
     selTowns.map((id) => armiesAt(id).map((a) => [a.id, a.name, total(a)])),
+    selTowns.length === 1 && mine(selTowns[0]) && game.graph.roads.filter((r) => r.a === selTowns[0] || r.b === selTowns[0]).map((r) => { const o = r.a === selTowns[0] ? r.b : r.a; return mine(o) && total(state(o).garrison); }),
     selTowns.map((id) => [state(id).owner, state(id).garrison, state(id).visible, state(id).bribe, state(id).force, state(id).rally, state(id).supplied, state(id).market, state(id).fort, Math.round(state(id).income ?? 0)]),
     s?.buildings && Object.entries(s.buildings).map(([k, b]) => [k, b.done, Object.values(b.lines).map((l) => [l.queue, l.repeat])])]);
   if (force || key !== cmdKey) {
@@ -1270,12 +1274,14 @@ function perform(does, at, many = false) {
   else if (what === 'repeat') command({ type: 'repeat', town: id, unit: arg, on: !Object.values(state(id).buildings).find((b) => b.lines[arg])?.lines[arg].repeat });
   else if (what === 'upgrade') command({ type: 'upgrade', town: id, upgrade: arg });
   else if (what === 'bribe') command({ type: 'bribe', town: id });
+  else if (what === 'gather') command({ type: 'gather', town: id });
   else if (what === 'cut') command({ type: 'cut', road: does.slice(4) });
   else if (what === 'repair') command({ type: 'repair', road: does.slice(7) });
   else if (what === 'norally') command({ type: 'rally', town: id, to: null });
   else if (what === 'recall') command({ type: 'redirect', army: selArmy });
   else if (what === 'storm') { if (confirm('Storm the town now? Its fortifications will count in full.')) command({ type: 'storm', army: selArmy }); }
   else if (what === 'merge') command({ type: 'merge', army: selArmy });
+  else if (what === 'reinforce') command({ type: 'reinforce', army: selArmy });
   else if (what === 'mergemany') { const keep = selMany[0]; command({ type: 'merge', army: keep }).then(() => select({ army: keep })); }
   else if (what === 'garrison') { const at = army(selArmy)?.at; command({ type: 'garrison', army: selArmy }).then(() => at && select({ towns: [at] })); }
   else if (what === 'split') { command({ type: 'split', army: selArmy, ...pickedOf(army(selArmy)) }); pickAll = true; picked = new Set(); }

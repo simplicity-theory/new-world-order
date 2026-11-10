@@ -873,9 +873,22 @@ export class Sim {
         if (!s.towns[to] || to === from) return fail('pick another town');
         const units = asked(src.garrison);
         if (!count(units)) return fail('no units to send');
-        if (!this.dispatch(who, from, to, units)) return fail('no road leads there');
+        // With `settle`, the units are a transfer between garrisons: they join the garrison where they arrive, if it is still yours.
+        if (!this.dispatch(who, from, to, units, !!c.settle && s.towns[to].owner === who)) return fail('no road leads there');
         take(src.garrison, units);
         return { ok: true };
+      }
+      case 'gather': {
+        // Call in the garrisons of every town of mine one road away, to join this town's garrison.
+        if (!mine) return fail('not your town');
+        let sent = 0;
+        for (const { road, other } of this.links.get(id) ?? []) {
+          const from = s.towns[other];
+          if (!road.intact || from.owner !== who || !count(from.garrison) || this.besiegersOf(other).length) continue;
+          const units = only(from.garrison);
+          if (this.dispatch(who, other, id, units, true)) { take(from.garrison, units); sent++; }
+        }
+        return sent ? { ok: true } : fail('no neighbouring town of yours has units to send');
       }
       case 'muster': {
         // Form an army from the garrison; it camps at the town until given orders.
@@ -940,6 +953,15 @@ export class Sim {
         if (!count(units) || count(units) >= count(army)) return fail('pick some of its units, not all or none');
         take(army, units);
         this.raise(who, units, army.at, { stars: army.stars ?? 0 });
+        return { ok: true };
+      }
+      case 'reinforce': {
+        // Take the whole garrison of the town an army is camped at into the army.
+        if (!camped) return fail('an army can only be reinforced while camped in a town of yours');
+        const from = s.towns[army.at!].garrison;
+        if (!count(from)) return fail('there is nobody in the garrison to add');
+        Object.assign(army, add(army, from));
+        s.towns[army.at!].garrison = none();
         return { ok: true };
       }
       case 'garrison': {

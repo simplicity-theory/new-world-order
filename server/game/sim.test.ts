@@ -224,6 +224,9 @@ test('armies can be formed, split, merged and stood down', () => {
   assert.equal(s.armies.length, 1);
   assert.equal(first.infantry, 6);
   assert.equal(first.name, 'Old Guard');
+  sim.command({ type: 'reinforce', army: first.id });
+  assert.equal(first.infantry, 10);
+  assert.equal(s.towns.c.garrison.infantry, 0);
   sim.command({ type: 'garrison', army: first.id });
   assert.equal(s.armies.length, 0);
   assert.equal(s.towns.c.garrison.infantry, 10);
@@ -343,6 +346,20 @@ test("the computer can play the player's side, and hand it back", () => {
   assert.ok(sim.state.towns.c.buildings.barracks, 'it starts building on its own');
   sim.command({ type: 'autoplay', on: false });
   assert.equal(sim.faction(PLAYER).ai, false);
+});
+
+test('gather calls in neighbouring garrisons, which join the garrison here', () => {
+  const { sim, s } = game();
+  assert.deepEqual(sim.command({ type: 'gather', town: 'c' }), { error: 'no neighbouring town of yours has units to send' });
+  give(sim, 'b', PLAYER, 4);
+  give(sim, 'd', PLAYER, 3);
+  give(sim, 'e', PLAYER, 9); // two roads away: not called
+  assert.deepEqual(sim.command({ type: 'gather', town: 'c' }), { ok: true });
+  assert.equal(s.armies.length, 2);
+  run(sim, 60);
+  assert.equal(s.towns.c.garrison.infantry, 7);
+  assert.equal(s.armies.length, 0);
+  assert.equal(s.towns.e.garrison.infantry, 9);
 });
 
 test('a camped army can be ordered to march', () => {
