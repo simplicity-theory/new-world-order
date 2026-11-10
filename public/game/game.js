@@ -1482,6 +1482,9 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Everything under the top bar hangs from wherever the bar ends, which moves when it wraps onto two rows.
+new ResizeObserver(() => document.documentElement.style.setProperty('--top', `${Math.round($('bar').getBoundingClientRect().bottom + 13)}px`)).observe($('bar'));
+
 // ----- Loading games -----
 
 function onTick(data) {

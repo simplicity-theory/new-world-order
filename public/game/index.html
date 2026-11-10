@@ -76,7 +76,7 @@
   .banner b { color: var(--ink); font-weight: 600; }
 
   /* Alerts: what needs attention, down the left edge. */
-  #alerts { position: absolute; z-index: 2; left: 12px; top: 124px; display: flex; flex-direction: column; gap: 6px; }
+  #alerts { position: absolute; z-index: 2; left: 12px; top: calc(var(--top, 78px) + 46px); display: flex; flex-direction: column; gap: 6px; }
   .alert { position: relative; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--c); background: var(--panel); color: var(--c); box-shadow: 0 1px 4px #0003; }
   .alert svg { width: 20px; height: 20px; }
   .alert .count { position: absolute; right: -5px; top: -5px; min-width: 16px; padding: 0 2px; border-radius: 8px; background: var(--c); color: #fff; font: 600 10.5px/16px system-ui, sans-serif; text-align: center; }
@@ -84,7 +84,7 @@
   /* Minimap, bottom right. */
   #minibox { right: 12px; bottom: 14px; padding: 5px; line-height: 0; }
   #mini { width: 196px; height: 196px; border-radius: 4px; cursor: crosshair; background: #d9dde0; }
-  .maplibregl-ctrl-top-left { top: 70px; left: 2px; }
+  .maplibregl-ctrl-top-left { top: calc(var(--top, 78px) - 8px); left: 2px; }
 
   /* Forecast pinned above the town an order would reach. */
   .fc { padding: 5px 8px 6px; border-radius: 7px; background: #fffffff7; box-shadow: 0 1px 6px #0005; border-top: 4px solid var(--muted); font: 12px/1.25 system-ui, sans-serif; min-width: 150px; text-align: center; pointer-events: none; }
@@ -103,7 +103,7 @@
   .slot.poor { border-color: #d9a0a0; }
 
   /* Production sidebar: every base and factory you own. */
-  #prod { top: 78px; right: 12px; padding: 8px 8px 6px; display: none; max-height: calc(100% - 330px); overflow: auto; }
+  #prod { top: var(--top, 78px); right: 12px; padding: 8px 8px 6px; display: none; max-height: calc(100% - 330px); overflow: auto; }
   #prod header { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 2px 6px; }
   .prow { display: flex; align-items: center; gap: 5px; padding: 3px; border-radius: 6px; }
   .prow.sel { background: #fff3cd; }
@@ -121,7 +121,7 @@
   .slots > .repeat { position: static; align-self: flex-start; }
   .hint { color: var(--muted); font-size: 12px; }
 
-  #panel { top: 78px; right: 270px; width: 290px; max-height: calc(100% - 230px); overflow: auto; padding: 12px; display: none; }
+  #panel { top: var(--top, 78px); right: 270px; width: 290px; max-height: calc(100% - 230px); overflow: auto; padding: 12px; display: none; }
   #panel h3 { margin: 10px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
   #panel h3:first-child { margin-top: 0; }
   .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
@@ -145,7 +145,7 @@
   #events time { font-variant-numeric: tabular-nums; opacity: 0.7; margin-right: 6px; }
 
   /* Overview sheet: sortable tables of the economy and the armies. */
-  #sheet { left: 50%; top: 78px; transform: translateX(-50%); width: min(760px, calc(100% - 40px)); max-height: calc(100% - 260px); display: none; flex-direction: column; z-index: 3; }
+  #sheet { left: 50%; top: var(--top, 78px); transform: translateX(-50%); width: min(760px, calc(100% - 40px)); max-height: calc(100% - 260px); display: none; flex-direction: column; z-index: 3; }
   #sheet header { display: flex; gap: 6px; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
   #sheet-body { overflow: auto; padding: 4px 12px 12px; }
   #sheet table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
@@ -161,10 +161,10 @@
   #sheet .tag.bad { background: #fde8e8; color: #9b1c1c; }
   #sheet .tag.good { background: #e6f4ea; color: #1e6b34; }
   #sheet h3 { margin: 14px 0 2px; font-size: 13px; }
-  #hint { left: 62px; top: 124px; max-width: 300px; padding: 8px 10px 8px 12px; display: none; gap: 8px; align-items: flex-start; border-left: 4px solid var(--you); }
+  #hint { left: 62px; top: calc(var(--top, 78px) + 46px); max-width: 300px; padding: 8px 10px 8px 12px; display: none; gap: 8px; align-items: flex-start; border-left: 4px solid var(--you); }
   #hint button { padding: 0 5px; border: 0; background: none; color: var(--muted); }
-  #toast { left: 50%; transform: translateX(-50%); top: 76px; padding: 8px 14px; display: none; max-width: 70%; }
-  #help { top: 76px; left: 62px; padding: 12px 16px; display: none; z-index: 4; }
+  #toast { left: 50%; transform: translateX(-50%); top: var(--top, 76px); padding: 8px 14px; display: none; max-width: 70%; }
+  #help { top: var(--top, 76px); left: 62px; padding: 12px 16px; display: none; z-index: 4; }
   #help table { border-collapse: collapse; }
   #help .menu { display: flex; gap: 6px; margin-bottom: 10px; }
   #help td { padding: 2px 10px 2px 0; }
@@ -200,7 +200,7 @@
   }
 
   /* Rules reference, written from the live rule values. */
-  #guide { left: 50%; top: 78px; transform: translateX(-50%); width: min(820px, calc(100% - 40px)); max-height: calc(100% - 120px); display: none; flex-direction: column; z-index: 6; }
+  #guide { left: 50%; top: var(--top, 78px); transform: translateX(-50%); width: min(820px, calc(100% - 40px)); max-height: calc(100% - 120px); display: none; flex-direction: column; z-index: 6; }
   #guide header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 15px; }
   #guide-body { overflow: auto; padding: 4px 16px 16px; line-height: 1.5; }
   #guide h3 { margin: 16px 0 4px; font-size: 14px; }
